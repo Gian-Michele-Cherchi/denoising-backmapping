@@ -50,11 +50,11 @@ class TensorProductConvLayer(nn.Module):
         out_nodes = out_nodes or node_attr.shape[0]
         out_tp = scatter(summand, edge_dst, dim=0, dim_size=out_nodes, reduce=reduce) # n_edges x out_dims 
         if self.residual:
-            padded = F.pad(node_attr, (0, out.shape[-1] - node_attr.shape[-1]))
-            out = out + padded
+            padded = F.pad(node_attr, (0, out_tp.shape[-1] - node_attr.shape[-1]))
+            out = out_tp + padded
 
         if self.batch_norm:
-            out = self.batch_norm(out)      
+            out_top = self.batch_norm(out_tp)      
 
         return out_tp
     
@@ -177,7 +177,7 @@ class GaussianSmearing(torch.nn.Module):
         dist = dist.view(-1, 1) - self.offset.view(1, -1)
         return torch.exp(self.coeff * torch.pow(dist, 2))
     
-         
+         # in this 
 # Code from https://github.com/hojonathanho/diffusion/blob/master/diffusion_tf/nn.py   
      
 def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
@@ -192,7 +192,15 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     assert emb.shape == (timesteps.shape[0], embedding_dim)
     return emb     
         
-        
+
+
+if __name__ == "__main__":
+     # we want to test the tensor product score model with a random graph made of n_polymers connected components as input 
+    from torch_geometric.data import Data
+    
+    # 
+    
+    model = TensorProductScoreModel()
 
      
     
