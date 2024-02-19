@@ -16,6 +16,8 @@ yml = "^0.0.1"
 e3nn = "^0.5.1"
 torch-scatter = "^2.1.2"
 torch-cluster = "^1.6.3"
+torch-geometric = "^2.5.0"
+ipykernel = "^6.29.2"
 
 [tool.poetry.dev-dependencies]
 
