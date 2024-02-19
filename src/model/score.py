@@ -8,7 +8,7 @@ from torch_cluster import radius_graph
 from torch_scatter import scatter
 import numpy as np 
 from e3nn.nn import BatchNorm
-
+import itertools
 
 #The following class implements a Tensor Product Convolutional layer 
 class TensorProductConvLayer(nn.Module):
@@ -54,7 +54,7 @@ class TensorProductConvLayer(nn.Module):
             out = out_tp + padded
 
         if self.batch_norm:
-            out_top = self.batch_norm(out_tp)      
+            out_tp = self.batch_norm(out_tp)      
 
         return out_tp
     
@@ -152,13 +152,13 @@ class TensorProductScoreModel(nn.Module):
         
         edge_sigma_emb = node_sigma_emb[edge_index[0].long()] #embeds the edge sigma in a higher dimensional space
         edge_attr = torch.cat([edge_attr, edge_sigma_emb], dim=1)
-        node_attr = torch.cat([data.x, node_sigma_emb], 1)
+        node_attr = torch.cat([data.x, node_sigma_emb], dim=1)
         
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
         edge_vec = data.pos[dst.long()] - data.pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
         edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
         
-        edge_attr = torch.cat([edge_attr, edge_length_emb], 1) # concatenates the edge attributes with the edge length embedding
+        edge_attr = torch.cat([edge_attr, edge_length_emb], dim=1) # concatenates the edge attributes with the edge length embedding
         
         edge_sh = o3.spherical_harmonics(self.sh_irreps, edge_vec, normalize=True, normalization='component')
         
@@ -177,7 +177,7 @@ class GaussianSmearing(torch.nn.Module):
         dist = dist.view(-1, 1) - self.offset.view(1, -1)
         return torch.exp(self.coeff * torch.pow(dist, 2))
     
-         # in this 
+         
 # Code from https://github.com/hojonathanho/diffusion/blob/master/diffusion_tf/nn.py   
      
 def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
@@ -192,13 +192,62 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     assert emb.shape == (timesteps.shape[0], embedding_dim)
     return emb     
         
+import torch
+from torch_geometric.utils import radius_graph
 
+def pbc_radius_graph(pos, r, box_size, batch=None):
+    # Create 8 copies of the graph in all combinations of +/- box_size
+    offsets = torch.tensor([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]], dtype=torch.float) * box_size
+    pos_extended = torch.cat([pos + offset for offset in offsets], dim=0)
+
+    if batch is not None:
+        # Also extend the batch tensor
+        batch_extended = torch.cat([batch for _ in offsets], dim=0)
+    else:
+        batch_extended = None
+
+    # Compute the radius graph on the extended positions
+    edge_index = radius_graph(pos_extended, r, batch=batch_extended)
+
+    # Map the node indices back to their original positions in the input graph
+    num_nodes = pos.size(0)
+    edge_index = edge_index % num_nodes
+
+    return edge_index
 
 if __name__ == "__main__":
      # we want to test the tensor product score model with a random graph made of n_polymers connected components as input 
     from torch_geometric.data import Data
-    
-    # 
+    from torch_geometric.data import Batch
+    import torch
+    n_atoms = 10000 # Number of atoms
+    m = 100 # Number of linear chains
+    node_features_dim = 50
+    edge_features_dim = 4
+
+    # Generate random node positions and features
+    node_positions = torch.randn(n_atoms, 3)  # 2 for 3D positions
+    node_features = torch.randn(n_atoms, node_features_dim)
+    data_list = []
+    for _ in range(16):
+    # Generate edge index for m linear chains
+        edge_index = []
+        atoms_per_chain = n_atoms // m
+        for i in range(m):
+            start = i * atoms_per_chain
+            end = start + atoms_per_chain
+            chain_edge_index = torch.tensor([[i, i+1] for i in range(start, end-1)], dtype=torch.long).t().contiguous()
+            edge_index.append(chain_edge_index)
+        edge_index = torch.cat(edge_index, dim=1)
+
+        # Generate random edge features
+        edge_features = torch.randn(edge_index.size(1), edge_features_dim)
+
+        # Create Data object
+        data_list.append(Data(pos=node_positions, x=node_features, edge_index=edge_index, edge_attr=edge_features))
+    batched_confs = Batch.from_data_list(data_list)
+    # Usage:
+    edge_index = pbc_radius_graph(data.pos, r=self.max_radius, box_size=d, batch=data.batch)
     
     model = TensorProductScoreModel()
 
