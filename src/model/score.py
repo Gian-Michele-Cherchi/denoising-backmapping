@@ -4,11 +4,13 @@ from e3nn import o3
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch_cluster import radius_graph
+#from torch_cluster import radius_graph
 from torch_scatter import scatter
 import numpy as np 
 from e3nn.nn import BatchNorm
-import itertools
+from scipy.spatial import KDTree
+from torch import Tensor
+from joblib import Parallel, delayed
 
 #The following class implements a Tensor Product Convolutional layer 
 class TensorProductConvLayer(nn.Module):
@@ -54,9 +56,9 @@ class TensorProductConvLayer(nn.Module):
             out = out_tp + padded
 
         if self.batch_norm:
-            out_tp = self.batch_norm(out_tp)      
+            out = self.batch_norm(out)      
 
-        return out_tp
+        return out
     
     
 #The following class implements a tensor product score model for predicting the score of atom displacements with respect to a coarse-grained representation
@@ -122,7 +124,6 @@ class TensorProductScoreModel(nn.Module):
             )
             conv_layers.append(layer)
         self.conv_layers = nn.ModuleList(conv_layers)
-        
     def forward(self, data):
         
         node_attr, edge_index, edge_attr, edge_sh = self.build_conv_graph(data)
@@ -140,7 +141,8 @@ class TensorProductScoreModel(nn.Module):
         
     def build_conv_graph(self, data):
         
-        radius_edges = radius_graph(data.pos, r=self.max_radius, batch=data.batch) #computes the radius graph of the input graph outputting the edge index of the radius graph
+        #radius_edges = radius_graph(data.pos, r=self.max_radius, batch=data.batch) #computes the radius graph of the input graph outputting the edge index of the radius graph
+        radius_edges = pbc_radius_graph(data.pos, r=self.max_radius, box_size=data.boxsize, batch=data.batch)
         edge_index = torch.cat([data.edge_index, radius_edges], dim=1).long() #concatenates the edges from the original graph of connected components and the radius graph
         edge_attr = torch.cat([
             data.edge_attr,
@@ -192,67 +194,28 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     assert emb.shape == (timesteps.shape[0], embedding_dim)
     return emb     
         
-import torch
-from torch_geometric.utils import radius_graph
-
-def pbc_radius_graph(pos, r, box_size, batch=None):
-    # Create 8 copies of the graph in all combinations of +/- box_size
-    offsets = torch.tensor([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]], dtype=torch.float) * box_size
-    pos_extended = torch.cat([pos + offset for offset in offsets], dim=0)
-
-    if batch is not None:
-        # Also extend the batch tensor
-        batch_extended = torch.cat([batch for _ in offsets], dim=0)
-    else:
-        batch_extended = None
-
-    # Compute the radius graph on the extended positions
-    edge_index = radius_graph(pos_extended, r, batch=batch_extended)
-
-    # Map the node indices back to their original positions in the input graph
-    num_nodes = pos.size(0)
-    edge_index = edge_index % num_nodes
-
-    return edge_index
+# The following function computes the radius graph of the input nodes positions using KDTrees and the box size
+def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
+    # KDTree generation for batched positions input
+    edge_index = []
+    
+    for batch_idx in range(box_size.shape[0]):
+        kdtree = KDTree(pos[batch == batch_idx].cpu().numpy(), boxsize=box_size[batch_idx].cpu().numpy())
+        pairs = kdtree.query_pairs(r, output_type='ndarray').swapaxes(0,1)
+        edge_index.append(pairs)
+    edge_index = np.array(edge_index).swapaxes(0,1).reshape(2, -1)
+    return torch.tensor(edge_index, dtype=torch.long).contiguous()
 
 if __name__ == "__main__":
-     # we want to test the tensor product score model with a random graph made of n_polymers connected components as input 
-    from torch_geometric.data import Data
-    from torch_geometric.data import Batch
+    
+    from model.pbc_radius_graph import gen_graph
     import torch
+    device = "cuda:0"
     n_atoms = 10000 # Number of atoms
     m = 100 # Number of linear chains
-    node_features_dim = 50
-    edge_features_dim = 4
-
-    # Generate random node positions and features
-    node_positions = torch.randn(n_atoms, 3)  # 2 for 3D positions
-    node_features = torch.randn(n_atoms, node_features_dim)
-    data_list = []
-    for _ in range(16):
-    # Generate edge index for m linear chains
-        edge_index = []
-        atoms_per_chain = n_atoms // m
-        for i in range(m):
-            start = i * atoms_per_chain
-            end = start + atoms_per_chain
-            chain_edge_index = torch.tensor([[i, i+1] for i in range(start, end-1)], dtype=torch.long).t().contiguous()
-            edge_index.append(chain_edge_index)
-        edge_index = torch.cat(edge_index, dim=1)
-
-        # Generate random edge features
-        edge_features = torch.randn(edge_index.size(1), edge_features_dim)
-
-        # Create Data object
-        data_list.append(Data(pos=node_positions, x=node_features, edge_index=edge_index, edge_attr=edge_features))
-    batched_confs = Batch.from_data_list(data_list)
-    # Usage:
-    edge_index = pbc_radius_graph(data.pos, r=self.max_radius, box_size=d, batch=data.batch)
-    
+    n_batch = 10 # Number of batches
+    batched_conf = gen_graph(n_atoms, m, n_batch=n_batch, device=device)
     model = TensorProductScoreModel()
-
-     
-    
         
         
         
