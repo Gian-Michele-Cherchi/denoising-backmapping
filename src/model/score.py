@@ -65,7 +65,7 @@ class TensorProductConvLayer(nn.Module):
 # The score is parametrized with the output parity equivariant node features of order l=1 
 class TensorProductScoreModel(nn.Module):
     def __init__(self, in_node_features: int=74, in_edge_features: int=4, sigma_embed_dim: int=32, sigma_min: float=0.01 * np.pi,
-                 sigma_max: float=np.pi, sh_lmax: int=2, ns: int=32, nv: int=8, num_conv_layers: int=4, max_radius=5, radius_embed_dim: int=50,
+                 sigma_max: float=np.pi, sh_lmax: int=2, ns: int=32, nv: int=32, num_conv_layers: int=4, max_radius=5, radius_embed_dim: int=50,
                  scale_by_sigma: bool=True, second_order_repr: bool=True, batch_norm: bool=True , residual: bool=True
                  ): 
         super(TensorProductScoreModel, self).__init__()
@@ -80,7 +80,7 @@ class TensorProductScoreModel(nn.Module):
         self.ns, self.nv = ns, nv
         self.scale_by_sigma = scale_by_sigma
         
-        # The following MLP is used to embed the node features in higher dimensional space with parity invariant features of order l=0
+        # The following MLP is used to embed the atom chemical features in higher dimensional space with parity invariant features of order l=0
         self.node_embedding = nn.Sequential(
             nn.Linear(in_node_features + sigma_embed_dim, ns),
             nn.ReLU(),
@@ -88,7 +88,7 @@ class TensorProductScoreModel(nn.Module):
         )
         
         self.edge_embedding = nn.Sequential(
-            nn.Linear(in_edge_features + radius_embed_dim, nv),
+            nn.Linear(in_edge_features + radius_embed_dim + sigma_embed_dim, nv),
             nn.ReLU(),
             nn.Linear(nv, nv)
         )
@@ -124,6 +124,7 @@ class TensorProductScoreModel(nn.Module):
             )
             conv_layers.append(layer)
         self.conv_layers = nn.ModuleList(conv_layers)
+        
     def forward(self, data):
         
         node_attr, edge_index, edge_attr, edge_sh = self.build_conv_graph(data)
@@ -133,7 +134,7 @@ class TensorProductScoreModel(nn.Module):
         edge_attr = self.edge_embedding(edge_attr)
         
         for layer in self.conv_layers:
-            edge_attr_ = torch.cat([edge_attr, node_attr[src, :self.ns], node_attr[dst, :self.ns]], dim=-1)
+            edge_attr_ = torch.cat([edge_attr, node_attr[src, :self.ns], node_attr[dst, :self.ns]], -1)
             node_attr = layer(node_attr, edge_index, edge_attr_, edge_sh, reduce="mean")
             
         return node_attr, edge_index
@@ -142,15 +143,17 @@ class TensorProductScoreModel(nn.Module):
     def build_conv_graph(self, data):
         
         #radius_edges = radius_graph(data.pos, r=self.max_radius, batch=data.batch) #computes the radius graph of the input graph outputting the edge index of the radius graph
-        radius_edges = pbc_radius_graph(data.pos, r=self.max_radius, box_size=data.boxsize, batch=data.batch)
+        radius_edges = pbc_radius_graph(data.pos, r=self.max_radius, box_size=data.box_size, batch=data.batch)
         edge_index = torch.cat([data.edge_index, radius_edges], dim=1).long() #concatenates the edges from the original graph of connected components and the radius graph
         edge_attr = torch.cat([
             data.edge_attr,
             torch.zeros(radius_edges.shape[-1], self.in_edge_features, device=data.x.device)
         ], dim=0)
-        
-        node_sigma = torch.log(data.node_sigma / self.sigma_min) / torch.log(self.sigma_max / self.sigma_min) * 10000 #normalizes the node sigma to the range [0, 1]
+    
+        log_sigma_max_min = torch.log(torch.tensor(self.sigma_max / self.sigma_min))
+        node_sigma = torch.log(data.node_sigma / self.sigma_min) / log_sigma_max_min * 10000 #normalizes the node sigma to the range [0, 1]
         node_sigma_emb = get_timestep_embedding(node_sigma, self.sigma_embed_dim) #embeds the node sigma in a higher dimensional space
+        
         
         edge_sigma_emb = node_sigma_emb[edge_index[0].long()] #embeds the edge sigma in a higher dimensional space
         edge_attr = torch.cat([edge_attr, edge_sigma_emb], dim=1)
@@ -208,15 +211,24 @@ def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
 
 if __name__ == "__main__":
     
-    from model.pbc_radius_graph import gen_graph
+    from pbc_radius_graph import gen_graph
     import torch
-    device = "cuda:0"
+    import time 
+    device = "cpu"
     n_atoms = 10000 # Number of atoms
     m = 100 # Number of linear chains
     n_batch = 10 # Number of batches
-    batched_conf = gen_graph(n_atoms, m, n_batch=n_batch, device=device)
-    model = TensorProductScoreModel()
-        
+    node_features_dim = 74
+    edge_features_dim = 4
+    max_radius = 0.2
+    batched_conf = gen_graph(n_atoms, m, n_batch=n_batch, node_features_dim=node_features_dim, edge_features_dim=edge_features_dim,  device=device)
+    score_model = TensorProductScoreModel(in_node_features=node_features_dim, in_edge_features=edge_features_dim, sigma_embed_dim=32, 
+                                    sh_lmax=2, ns=32, nv=32, num_conv_layers=4, max_radius=max_radius, radius_embed_dim=50)
+    
+    start = time.time()
+    node_attr, edge_index = score_model(batched_conf)
+    end = time.time()
+    print(f"Wall time: {end - start} seconds")    
         
         
         
