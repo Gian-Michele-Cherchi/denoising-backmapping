@@ -46,12 +46,10 @@ def featurize_polymer(polymer, types=atom_types):
         atomic_number.append(atom.GetAtomicNum())
         atom_features.extend(one_k_encoding(atom.GetDegree(), [0, 1, 2, 3]))
         
-        #atom_features.extend(one_k_encoding(atom.GetHybridization(), [
-        #    Chem.rdchem.HybridizationType.SP,
-        #    Chem.rdchem.HybridizationType.SP2,
-        #    Chem.rdchem.HybridizationType.SP3,
-        #    Chem.rdchem.HybridizationType.SP3D,
-        #    Chem.rdchem.HybridizationType.SP3D2]))
+        atom_features.extend(one_k_encoding(atom.GetHybridization(), [
+            Chem.rdchem.HybridizationType.SP,
+            Chem.rdchem.HybridizationType.SP2,
+            Chem.rdchem.HybridizationType.SP3,]))
         #atom_features.extend(one_k_encoding(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5, 6]))
     
     z = torch.tensor(atomic_number, dtype=torch.long)
@@ -86,6 +84,6 @@ def featurize_pol_from_smiles(smiles_rep: str, hydrogens: bool = False):
 if __name__ == "__main__":
     # Test the featurization process
     from rdkit import Chem
-    polymer_smiles = "C=CC=CC=CC=CC=CC=CC=CC=CC=C"
+    polymer_smiles = r"C\C=C/C" * 10
     pol_data = featurize_pol_from_smiles(polymer_smiles, hydrogens=True)
     
