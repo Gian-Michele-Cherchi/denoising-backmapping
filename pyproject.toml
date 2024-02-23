@@ -18,6 +18,8 @@ torch-scatter = "^2.1.2"
 torch-cluster = "^1.6.3"
 torch-geometric = "^2.5.0"
 ipykernel = "^6.29.2"
+rdkit = "^2023.9.5"
+bigsmiles = "^0.0.10"
 
 [tool.poetry.dev-dependencies]
 
