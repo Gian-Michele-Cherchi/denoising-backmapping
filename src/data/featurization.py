@@ -11,7 +11,7 @@ from torch_scatter import scatter
 from torch_geometric.data import Data, Dataset, DataLoader
 
 
-bonds = {BT.SINGLE: 0, BT.DOUBLE: 1,"INTRACHAIN": 2, "INTERCHAIN": 3}
+bonds = {BT.SINGLE: 0, BT.DOUBLE: 1,"NONBONDED": 2}
 atom_types = {'H': 0, 'C': 1}
 
 # The following function performes a one-hot encoding of the atom type
@@ -54,7 +54,7 @@ def featurize_polymer(polymer, types=atom_types):
     
     z = torch.tensor(atomic_number, dtype=torch.long)
     
-    row, col, edge_type, bond_type = [], [], [], []
+    row, col, edge_type = [], [], []
     for bond in polymer.GetBonds():
         start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
         row += [start, end]
@@ -74,12 +74,15 @@ def featurize_polymer(polymer, types=atom_types):
 
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z)
 
+
 def featurize_pol_from_smiles(smiles_rep: str, hydrogens: bool = False):
     polymer = Chem.MolFromSmiles(smiles_rep)
     if hydrogens:
         polymer = Chem.AddHs(polymer)
     
     return featurize_polymer(polymer)
+
+
 
 if __name__ == "__main__":
     # Test the featurization process
