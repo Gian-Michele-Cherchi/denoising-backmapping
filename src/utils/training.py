@@ -16,9 +16,9 @@ def train_epoch(model, loader, optimizer, device):
         data = model(data)
         pred = data.edge_pred
 
-        #score = torus.score(
-        #    data.edge_rotate.cpu().numpy(),
-        #    data.edge_sigma.cpu().numpy())
+        score = torus.score(
+            data.edge_rotate.cpu().numpy(),
+            data.edge_sigma.cpu().numpy())
         score = torch.tensor(score, device=pred.device)
         #score_norm = torus.score_norm(data.edge_sigma.cpu().numpy())
         score_norm = torch.tensor(score_norm, device=pred.device)
