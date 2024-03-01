@@ -2,6 +2,7 @@ import numpy as np
 import os
 import abc
 import torch
+import math
 
 from utils.misc import get_beta_scheduler
 
@@ -93,7 +94,7 @@ class SDE(abc.SDE):
                 """Create the drift and diffusion functions for the reverse SDE/ODE."""
                 drift, diffusion = sde_fn(x, t)
                 score = score_fn(x, t)
-                drift = drift - diffusion[:, None, None, None] ** 2 * score * (0.5 if self.probability_flow else 1.)
+                drift = drift - diffusion[:, None] ** 2 * score * (0.5 if self.probability_flow else 1.)
                 # Set the diffusion function to zero for ODEs.
                 diffusion = 0. if self.probability_flow else diffusion
                 return drift, diffusion
@@ -138,12 +139,12 @@ class VPSDE(SDE):
     
     def sde(self, x, t):
         beta_t = self.discrete_betas[t]
-        drift = -0.5 * beta_t[:, None, None, None] * x
+        drift = -0.5 * beta_t[:, None] * x
         diffusion = torch.sqrt(beta_t)
         return drift, diffusion 
     
     def marginal_prob(self, x, t):
-        log_mean_coeff = - 0.25 * t ** 2 * (self.beta_T - self.beta_0) - 0.5 * t * self.beta_0 # to implement
+        log_mean_coeff = - 0.5 * ( self.beta_0 * t + (self.beta_T - self.beta_0) * torch.log(torch.exp(t) + 1) - math.log(2) )  
         mean = torch.exp(log_mean_coeff[:, None]) * x
         std = torch.sqrt(1 - torch.exp(2 * log_mean_coeff))
         return mean, std
