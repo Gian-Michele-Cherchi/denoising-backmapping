@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from score import pbc_radius_graph
+from src.model.score_model import pbc_radius_graph
 from torch_geometric.data import Data
 from torch_geometric.data import Batch
 import time 
