@@ -2,14 +2,8 @@
 
 from abc import ABC, abstractmethod
 from functools import partial
-import yaml
 from torch.nn import functional as F
-from torchvision import torch
-from motionblur.motionblur import Kernel
-
-from util.resizer import Resizer
-from util.img_utils import Blurkernel, fft2_m
-
+import torch
 
 # =================
 # Operation classes
@@ -31,6 +25,9 @@ def get_operator(name: str, **kwargs):
         raise NameError(f"Name {name} is not defined.")
     return __OPERATOR__[name](**kwargs)
 
+# =============
+# Operators Abstract Classes
+# =============
 
 class LinearOperator(ABC):
     @abstractmethod
@@ -51,107 +48,6 @@ class LinearOperator(ABC):
         # calculate (I - A^T * A)Y - AX
         return self.ortho_project(measurement, **kwargs) - self.forward(data, **kwargs)
 
-
-@register_operator(name='noise')
-class DenoiseOperator(LinearOperator):
-    def __init__(self, device):
-        self.device = device
-    
-    def forward(self, data):
-        return data
-
-    def transpose(self, data):
-        return data
-    
-    def ortho_project(self, data):
-        return data
-
-    def project(self, data):
-        return data
-
-
-@register_operator(name='super_resolution')
-class SuperResolutionOperator(LinearOperator):
-    def __init__(self, in_shape, scale_factor, device):
-        self.device = device
-        self.up_sample = partial(F.interpolate, scale_factor=scale_factor)
-        self.down_sample = Resizer(in_shape, 1/scale_factor).to(device)
-
-    def forward(self, data, **kwargs):
-        return self.down_sample(data)
-
-    def transpose(self, data, **kwargs):
-        return self.up_sample(data)
-
-    def project(self, data, measurement, **kwargs):
-        return data - self.transpose(self.forward(data)) + self.transpose(measurement)
-
-@register_operator(name='motion_blur')
-class MotionBlurOperator(LinearOperator):
-    def __init__(self, kernel_size, intensity, device):
-        self.device = device
-        self.kernel_size = kernel_size
-        self.conv = Blurkernel(blur_type='motion',
-                               kernel_size=kernel_size,
-                               std=intensity,
-                               device=device).to(device)  # should we keep this device term?
-
-        self.kernel = Kernel(size=(kernel_size, kernel_size), intensity=intensity)
-        kernel = torch.tensor(self.kernel.kernelMatrix, dtype=torch.float32)
-        self.conv.update_weights(kernel)
-    
-    def forward(self, data, **kwargs):
-        # A^T * A 
-        return self.conv(data)
-
-    def transpose(self, data, **kwargs):
-        return data
-
-    def get_kernel(self):
-        kernel = self.kernel.kernelMatrix.type(torch.float32).to(self.device)
-        return kernel.view(1, 1, self.kernel_size, self.kernel_size)
-
-
-@register_operator(name='gaussian_blur')
-class GaussialBlurOperator(LinearOperator):
-    def __init__(self, kernel_size, intensity, device):
-        self.device = device
-        self.kernel_size = kernel_size
-        self.conv = Blurkernel(blur_type='gaussian',
-                               kernel_size=kernel_size,
-                               std=intensity,
-                               device=device).to(device)
-        self.kernel = self.conv.get_kernel()
-        self.conv.update_weights(self.kernel.type(torch.float32))
-
-    def forward(self, data, **kwargs):
-        return self.conv(data)
-
-    def transpose(self, data, **kwargs):
-        return data
-
-    def get_kernel(self):
-        return self.kernel.view(1, 1, self.kernel_size, self.kernel_size)
-
-@register_operator(name='inpainting')
-class InpaintingOperator(LinearOperator):
-    '''This operator get pre-defined mask and return masked image.'''
-    def __init__(self, device):
-        self.device = device
-    
-    def forward(self, data, **kwargs):
-        try:
-            return data * kwargs.get('mask', None).to(self.device)
-        except:
-            raise ValueError("Require mask")
-    
-    def transpose(self, data, **kwargs):
-        return data
-    
-    def ortho_project(self, data, **kwargs):
-        return data - self.forward(data, **kwargs)
-
-
 class NonLinearOperator(ABC):
     @abstractmethod
     def forward(self, data, **kwargs):
@@ -160,16 +56,39 @@ class NonLinearOperator(ABC):
     def project(self, data, measurement, **kwargs):
         return data + measurement - self.forward(data) 
 
-@register_operator(name='phase_retrieval')
-class PhaseRetrievalOperator(NonLinearOperator):
-    def __init__(self, oversample, device):
-        self.pad = int((oversample / 8.0) * 256)
+# =============
+# Operators
+# =============
+@register_operator(name="coarse_grain")
+class CoarseGrainOperator(LinearOperator):
+    def __init__(self, n_atoms, n_monomers, n_polymers, device):
         self.device = device
-        
+        self.n_atoms = n_atoms
+        self.n_monomers = n_monomers
+        self.n_polymers = n_polymers
+        self.com_matrix = torch.zeros(n_monomers, n_atoms, device=device)
+
     def forward(self, data, **kwargs):
-        padded = F.pad(data, (self.pad, self.pad, self.pad, self.pad))
-        amplitude = fft2_m(padded).abs()
-        return amplitude
+        tot_mass = data.mon_masses.sum() # total monomer mass 
+        atom_monomer_id = data.atom_monomer_id # [n_atoms x 1], values from 0 to n_monomers -1 
+        n_atoms_monomer = self.n_monomers*( atom_monomer_id[:50] == 0 ).sum().item() # number of atoms per polymer
+        
+        for i in range(self.n_monomers*self.n_polymers):
+            mon_id = i % (self.n_monomers-1) if  i != self.n_monomers else self.n_monomers-1
+            pol_id = i // self.n_monomers
+            self.com_matrix[i, int(pol_id * n_atoms_monomer * self.n_monomers) : int(pol_id * n_atoms_monomer * self.n_monomers) + 1] = torch.tensor(
+                atom_monomer_id == mon_id, dtype=torch.float64, device=self.device)
+            
+        batch_size = data.batch.unique().shape[0]
+        batch_com_matrix = torch.block_diag(*[self.com_matrix for _ in range(batch_size)])
+        com_confs = (1. / tot_mass ) * (batch_com_matrix @ data.atom_positions)
+        
+        return com_confs
+            
+    def get_cg_kernel(self):
+        return self.com_matrix 
+    
+    
 
 # =============
 # Noise classes
