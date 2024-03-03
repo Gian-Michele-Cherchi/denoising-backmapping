@@ -35,10 +35,10 @@ conditioning:
 
 measurement:
   operator:
-    name: gaussian_blur
-    kernel_size: 61
-    intensity: 3.0
-  
+    name: coarse_grain
+    n_atoms: 10000
+    n_monomers: 50
+    n_polymers: 100
   noise: 
     name: gaussian
     sigma: 0.05
