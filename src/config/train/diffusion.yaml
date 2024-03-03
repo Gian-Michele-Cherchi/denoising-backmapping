@@ -1,0 +1,44 @@
+diffusion:
+  sampler: ddpm
+  steps: 10000
+  noise_schedule: sigmoid
+  model_mean_type: epsilon 
+  model_var_type: learned_range
+  dynamic_threshold: False
+  clip_denoised: True
+  rescale_timesteps: False
+  timestep_respacing: 1000
+
+model:
+  in_node_features: 
+  in_edge_features
+  sigma_embed_dim
+  sh_lmax
+  ns
+  nv
+  num_conv_layers
+  max_radius
+  radius_embed_dim
+  scale_by_sigma
+  second_order_repr
+  batch_norm
+  residual
+
+data:
+  name: ffhq
+  root: ./data/samples/
+
+conditioning:
+  method: ps
+  params:
+    scale: 0.3
+
+measurement:
+  operator:
+    name: gaussian_blur
+    kernel_size: 61
+    intensity: 3.0
+  
+  noise: 
+    name: gaussian
+    sigma: 0.05
