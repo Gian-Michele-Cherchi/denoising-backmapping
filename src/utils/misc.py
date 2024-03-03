@@ -49,39 +49,6 @@ def get_beta_scheduler(beta_schedule: str, *, beta_start:float, beta_end:float, 
     assert betas.shape == (diffusion_timesteps,)
     return betas
 
-_MODELS = {}
-
-
-def register_model(cls=None, *, name=None):
-  """A decorator for registering model classes."""
-
-  def _register(cls):
-    if name is None:
-      local_name = cls.__name__
-    else:
-      local_name = name
-    if local_name in _MODELS:
-      raise ValueError(f'Already registered model with name: {local_name}')
-    _MODELS[local_name] = cls
-    return cls
-
-  if cls is None:
-    return _register
-  else:
-    return _register(cls)
-
-
-def get_model(name):
-  return _MODELS[name]
-
-def create_model(config):
-  """Create the score model."""
-  model_name = config.model.name
-  score_model = get_model(model_name)(config)
-  score_model = score_model.to(config.device)
-  score_model = torch.nn.DataParallel(score_model)
-  return score_model
-
 
 def get_model_fn(model, train=False):
   """Create a function to give the output of the score-based model.

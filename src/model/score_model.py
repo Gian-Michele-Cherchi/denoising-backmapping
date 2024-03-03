@@ -240,7 +240,39 @@ class GaussianSmearing(torch.nn.Module):
         dist = dist.view(-1, 1) - self.offset.view(1, -1)
         return torch.exp(self.coeff * torch.pow(dist, 2))
            
-  
+def create_model(
+    in_node_features,
+    in_edge_features,
+    sigma_embed_dim,
+    sh_lmax,
+    ns,
+    nv,
+    num_conv_layers,
+    max_radius,
+    radius_embed_dim,
+    scale_by_sigma,
+    second_order_repr,
+    batch_norm, 
+    residual,
+    model_path=None,
+    ):
+
+    model= TensorProductScoreModel(in_node_features=in_node_features, in_edge_features=in_edge_features, sigma_embed_dim=sigma_embed_dim, 
+                                    sh_lmax=sh_lmax, ns=ns, nv=nv, num_conv_layers=num_conv_layers, max_radius=max_radius, 
+                                    radius_embed_dim=radius_embed_dim,
+                                    second_order_repr=second_order_repr, batch_norm=batch_norm, residual=residual, scale_by_sigma=scale_by_sigma)
+
+    try:
+        model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    except Exception as e:
+        print(f"Got exception: {e} / Randomly initialize")
+    return model
+
+
+
+
+
+
 
 if __name__ == "__main__":
     
