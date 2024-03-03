@@ -1,58 +1,47 @@
 from functools import partial
 import os
-import argparse
-import yaml
-
 import torch
-#import torchvision.transforms as transforms
-
 from sampling.conditioning import get_conditioning_method
 from sampling.measurements import get_noise, get_operator
-from utils.misc import create_model
+from model.score_model import create_model
 from sampling.cond_sampler import create_sampler
 from data.dataloader import get_dataset, get_dataloader
-#from util.img_utils import clear_color, mask_generator
 from utils.logger import get_logger
+import wandb
+import hydra 
+from omegaconf import DictConfig
 
 
-def load_yaml(file_path: str) -> dict:
-    with open(file_path) as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    return config
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model_config', type=str)
-    parser.add_argument('--diffusion_config', type=str)
-    parser.add_argument('--task_config', type=str)
-    parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--save_dir', type=str, default='./results')
-    args = parser.parse_args()
-   
+@hydra.main(version_base=None, config_path="config", config_name="base_config")
+def eval(cfg: DictConfig):
+    # log to wandb and  get train config 
+    run_id = os.path.join("denoising-backmapping", cfg.eval["run_id"])
+    api = wandb.Api()
+    run = api.run(run_id)
+    run_name = run.name
+    run_config = run.config
+    model_config = run.config.model
+    diffusion_config = run.config.diffusion
+    measure_config = run.config.measurement
+    
     # logger
     logger = get_logger()
     
     # Device setting
-    device_str = f"cuda:{args.gpu}" if torch.cuda.is_available() else 'cpu'
+    device_str = f"cuda:{cfg.gpu}" if torch.cuda.is_available() else 'cpu'
     logger.info(f"Device set to {device_str}.")
     device = torch.device(device_str)  
-    
-    # Load configurations
-    model_config = load_yaml(args.model_config)
-    diffusion_config = load_yaml(args.diffusion_config)
-    task_config = load_yaml(args.task_config)
    
     #assert model_config['learn_sigma'] == diffusion_config['learn_sigma'], \
     #"learn_sigma must be the same for model and diffusion configuartion."
     
     # Load model
-    model = create_model(**model_config)
+    model_path = os.path.join(cfg.save_dir, run_name, 'best_model.pth')
+    model = create_model(**model_config, model_path=model_path)
     model = model.to(device)
     model.eval()
 
     # Prepare Operator and noise
-    measure_config = task_config['measurement']
     operator = get_operator(device=device, **measure_config['operator'])
     noiser = get_noise(**measure_config['noise'])
     logger.info(f"Operation: {measure_config['operator']['name']} / Noise: {measure_config['noise']['name']}")
@@ -68,7 +57,7 @@ def main():
     sample_fn = partial(sampler.p_sample_loop, model=model, measurement_cond_fn=measurement_cond_fn)
    
     # Working directory
-    out_path = os.path.join(args.save_dir, measure_config['operator']['name'])
+    out_path = os.path.join(cfg.save_dir, measure_config['operator']['name'])
     os.makedirs(out_path, exist_ok=True)
     for img_dir in ['input', 'recon', 'progress', 'label']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
@@ -88,7 +77,7 @@ def main():
         
     # Do Inference
     for i, ref_img in enumerate(loader):
-        logger.info(f"Inference for image {i}")
+        logger.info(f"Inference for CG Conf {i}")
         fname = str(i).zfill(5) + '.png'
         ref_img = ref_img.to(device)
 
@@ -117,4 +106,4 @@ def main():
         #plt.imsave(os.path.join(out_path, 'recon', fname), clear_color(sample))
 
 if __name__ == '__main__':
-    main()
+    eval()
