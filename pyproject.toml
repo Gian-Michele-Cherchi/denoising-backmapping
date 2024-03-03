@@ -21,6 +21,7 @@ ipykernel = "^6.29.2"
 rdkit = "^2023.9.5"
 bigsmiles = "^0.0.10"
 matplotlib = "^3.8.3"
+MDAnalysis = "^2.7.0"
 
 [tool.poetry.dev-dependencies]
 
