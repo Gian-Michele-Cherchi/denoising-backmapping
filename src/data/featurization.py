@@ -12,7 +12,7 @@ from torch_geometric.data import Data, Dataset, DataLoader
 
 
 bonds = {BT.SINGLE: 0, BT.DOUBLE: 1,"NONBONDED": 2}
-atom_types = {'H': 0, 'C': 1}
+TYPES = {'H': 0, 'C': 1}
 
 # The following function performes a one-hot encoding of the atom type
 def one_k_encoding(value, choices):
@@ -24,7 +24,7 @@ def one_k_encoding(value, choices):
     return encoding
     
 # The following function featurize the polymer 
-def featurize_polymer(polymer, types=atom_types):
+def featurize_polymer(polymer, types):
     """
     Part of the featurisation code taken from GeoMol https://github.com/PattanaikL/GeoMol
     Returns:
@@ -33,6 +33,9 @@ def featurize_polymer(polymer, types=atom_types):
         edge_index: [2, E] tensor of node indices forming edges
         edge_attr: edge features
     """
+    #types = TYPES[key] for key in types
+    types = {k: TYPES[k] for k in types if k in TYPES}
+
     N = polymer.GetNumAtoms()
     #dehydr_polymer = Chem.RemoveHs(polymer)
     #N_carbons = dehydr_polymer.GetNumAtoms()
@@ -72,15 +75,15 @@ def featurize_polymer(polymer, types=atom_types):
     x = torch.cat([x1.to(torch.float), x2], dim=-1)
     #x = x1
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z)
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z), types
 
 
-def featurize_pol_from_smiles(smiles_rep: str, hydrogens: bool = False):
+def featurize_pol_from_smiles(smiles_rep: str, types:list, hydrogens: bool = False):
     polymer = Chem.MolFromSmiles(smiles_rep)
     if hydrogens:
         polymer = Chem.AddHs(polymer)
     
-    return featurize_polymer(polymer)
+    return featurize_polymer(polymer, types=types)
 
 
 
