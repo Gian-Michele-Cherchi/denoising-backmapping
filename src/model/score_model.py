@@ -254,7 +254,7 @@ def create_model(
     second_order_repr,
     batch_norm, 
     residual,
-    model_path=None,
+    model_path="",
     ):
 
     model= TensorProductScoreModel(in_node_features=in_node_features, in_edge_features=in_edge_features, sigma_embed_dim=sigma_embed_dim, 
