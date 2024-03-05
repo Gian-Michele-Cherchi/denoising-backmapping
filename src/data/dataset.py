@@ -5,12 +5,12 @@ from multiprocessing import Pool
 from rdkit import Chem
 import numpy as np 
 import torch
-from tqdm import tqdm 
+#from tqdm import tqdm 
 import copy
 import pandas as pd
 from torch_geometric.data import Dataset, DataLoader, Data
 
-from featurization import featurize_polymer, featurize_pol_from_smiles
+from data.featurization import featurize_pol_from_smiles
 TYPES = {'H': 0, 'C': 1}
 
 __DATASET__ = {}
@@ -104,11 +104,11 @@ class PolymerMeltDataset(Dataset):
             "n_monomers":n_monomers}
         
     
-    def get(self, idx):
+    def __getitem__(self, idx: int):
         data = self.datapoints[idx]
         return copy.deepcopy(data)
     
-    def len(self):
+    def __len__(self):
         return len(self.datapoints)
             
     
