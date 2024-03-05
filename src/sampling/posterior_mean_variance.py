@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from util.img_utils import dynamic_thresholding
+
 
 
 
@@ -38,8 +38,6 @@ class MeanProcessor(ABC):
         pass
 
     def process_xstart(self, x):
-        if self.dynamic_threshold:
-            x = dynamic_thresholding(x, s=0.95)
         if self.clip_denoised:
             x = x.clamp(-1, 1)
         return x
