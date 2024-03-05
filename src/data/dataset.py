@@ -13,6 +13,22 @@ from torch_geometric.data import Dataset, DataLoader, Data
 from featurization import featurize_polymer, featurize_pol_from_smiles
 TYPES = {'H': 0, 'C': 1}
 
+__DATASET__ = {}
+
+def register_dataset(name: str):
+    def wrapper(cls):
+        if __DATASET__.get(name, None):
+            raise NameError(f"Name {name} is already registered!")
+        __DATASET__[name] = cls
+        return cls
+    return wrapper
+
+def get_dataset(name: str, root: str, **kwargs):
+    if __DATASET__.get(name, None) is None:
+        raise NameError(f"Dataset {name} is not defined.")
+    return __DATASET__[name](root=root, **kwargs)
+
+@register_dataset('polymer_melt')
 class PolymerMeltDataset(Dataset):
     def __init__(self,  dataset_path , mode, num_workers=1, device: str='cpu'):
         super(PolymerMeltDataset, self).__init__()
