@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from util.img_utils import clear_color
+#from util.img_utils import clear_color
 from .posterior_mean_variance import get_mean_processor, get_var_processor
-
+from utils.misc import get_beta_scheduler
 
 
 __SAMPLER__ = {}
@@ -202,7 +202,7 @@ class GaussianDiffusion:
             if record:
                 if idx % 10 == 0:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
-                    plt.imsave(file_path, clear_color(img))
+                    #plt.imsave(file_path, clear_color(img))
 
         return img       
         
@@ -433,6 +433,8 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
             num_diffusion_timesteps,
             lambda t: math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2,
         )
+    elif schedule_name == "sigmoid":
+        return get_beta_scheduler(beta_start=1e-7, beta_end=1e-3, diffusion_timesteps=num_diffusion_timesteps)
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
 
