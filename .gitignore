@@ -1,2 +1,9 @@
 **dataset
 *.lock
+*wandb
+*src/model/__pycache__
+*src/data/__pycache__
+*src/sampling/__pycache__
+*src/utils/__pycache__
+*outputs
+*notebooks
