@@ -1,7 +1,7 @@
 import logging
 
 def get_logger():
-    logger = logging.getLogger(name='DPS')
+    logger = logging.getLogger(name='DenoisingBackmapping')
     logger.setLevel(logging.INFO)
     
     formatter = logging.Formatter("%(asctime)s [%(name)s] >> %(message)s")
