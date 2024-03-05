@@ -7,22 +7,22 @@ diffusion:
   dynamic_threshold: False
   clip_denoised: True
   rescale_timesteps: False
-  timestep_respacing: 1000
+  timestep_respacing: 10000
 
 model:
-  in_node_features: 
-  in_edge_features
-  sigma_embed_dim
-  sh_lmax
-  ns
-  nv
-  num_conv_layers
-  max_radius
-  radius_embed_dim
-  scale_by_sigma
-  second_order_repr
-  batch_norm
-  residual
+  in_node_features: 6
+  in_edge_features: 8
+  sigma_embed_dim: 32
+  sh_lmax: 2
+  ns: 32
+  nv: 32
+  num_conv_layers: 4 
+  max_radius: 0.02
+  radius_embed_dim: 50
+  scale_by_sigma: True
+  second_order_repr: True
+  batch_norm: True
+  residual: True
 
 data:
   name: ffhq
@@ -42,3 +42,8 @@ measurement:
   noise: 
     name: gaussian
     sigma: 0.05
+
+train:
+  gpu: 0
+  lr: 1e-4
+  epochs: 100
