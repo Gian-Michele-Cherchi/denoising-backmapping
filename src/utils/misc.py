@@ -4,7 +4,6 @@ from torch import Tensor
 import numpy as np
 import math
 from torch.nn import functional as F
-import model.sde as sde_lib
 
 # The following function computes the radius graph of the input nodes positions using KDTrees and the box size
 def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
@@ -32,107 +31,15 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     assert emb.shape == (timesteps.shape[0], embedding_dim)
     return emb   
 
-def get_beta_scheduler(beta_schedule: str, *, beta_start:float, beta_end:float, diffusion_timesteps: int):
+def get_beta_scheduler(beta_start:float, beta_end:float, diffusion_timesteps: int):
     
     def sigmoid(x):
         return 1 / (np.exp(-x) + 1)
     
-    if beta_schedule == "sigmoid":
-        betas = torch.linspace(-10, 10, steps=diffusion_timesteps)
-        betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
-    elif beta_schedule == "linear":
-        betas = torch.linspace(
-            beta_start, beta_end, steps=diffusion_timesteps, dtype=np.float64
-        )
-    else:
-        raise NotImplementedError(f"Unknown or Not Implemented beta schedule: {beta_schedule}")
+    betas = torch.linspace(-10, 10, steps=diffusion_timesteps)
+    betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
     assert betas.shape == (diffusion_timesteps,)
     return betas
-
-
-def get_model_fn(model, train=False):
-  """Create a function to give the output of the score-based model.
-
-        Args:
-            model: The score model.
-            train: `True` for training and `False` for evaluation.
-
-        Returns:
-            A model function.
-        """
-
-  def model_fn(x, labels):
-    """Compute the output of the score-based model.
-
-    Args:
-      x: A mini-batch of input data.
-      labels: A mini-batch of conditioning variables for time steps. Should be interpreted differently
-        for different models.
-
-    Returns:
-      A tuple of (model output, new mutable states)
-    """
-    if not train:
-      model.eval()
-      return model(x, labels)
-    else:
-      model.train()
-      return model(x, labels)
-
-  return model_fn
-
-
-def get_score_fn(sde, model, train=False, continuous=False):
-     """Wraps `score_fn` so that the model output corresponds to a real time-dependent score function.
-
-    Args:
-        sde: An `sde_lib.SDE` object that represents the forward SDE.
-        model: A score model.
-        train: `True` for training and `False` for evaluation.
-        continuous: If `True`, the score-based model is expected to directly take continuous time steps.
-
-    Returns:
-        A score function.
-    """
-     model_fn = get_model_fn(model, train=train)
-     
-     if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
-        def score_fn(x, t):
-            # Scale neural network output by standard deviation and flip sign
-            if continuous or isinstance(sde, sde_lib.subVPSDE):
-                # For VP-trained models, t=0 corresponds to the lowest noise level
-                # The maximum value of time embedding is assumed to 999 for
-                # continuously-trained models.
-                labels = t * 999
-                score = model_fn(x, labels)
-                std = sde.marginal_prob(torch.zeros_like(x), t)[1]
-            else:
-                # For VP-trained models, t=0 corresponds to the lowest noise level
-                diff_timestep_index = t * (sde.N - 1)
-                score = model_fn(x, labels)
-                std = sde.sqrt_1m_alphas_cumprod.to(labels.device)[diff_timestep_index.long()]
-
-            score = -score / std[:, None]
-            return score
-        
-     elif isinstance(sde, sde_lib.VESDE):
-        def score_fn(x, t):
-            if continuous:
-                labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
-            else:
-                # For VE-trained models, t=0 corresponds to the highest noise level
-                labels = sde.T - t
-                labels *= sde.N - 1
-                labels = torch.round(labels).long()
-
-            score = model_fn(x, labels)
-            return score
-
-     else:
-        raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
-    
-     return score_fn
-
 
 
 
