@@ -7,8 +7,7 @@ from utils.logger import get_logger
 from model.score_model import create_model
 from sampling.cond_sampler import create_sampler
 from data.dataset import get_dataset, get_dataloader
-from model.losses import get_ddpm_loss_fn
-from utils.training import train_epoch, test_epoch
+from utils.training import train_epoch, test_epoch, get_ddpm_loss_fn
 import wandb
 import hydra 
 from omegaconf import DictConfig
@@ -36,21 +35,21 @@ def train_app(cfg: DictConfig) -> None:
     model = create_model(**model_config)
     model = model.to(device)
     
+    # Dataset 
+    #dataset = get_dataset(**data_config)
+    loader, dataset = get_dataloader(data_config, batch_size=train_config.batch_size)
+    
     # Load diffusion sampler
     sampler = create_sampler(**diffusion_config) 
-    loss_fn = partial(get_ddpm_loss_fn, sampler=sampler, train=True)
-    
-    # Dataset 
-    dataset = get_dataset(**data_config)
-    loader = get_dataloader(dataset, batch_size=1, num_workers=0, train=True)
+    loss_fn = partial(get_ddpm_loss_fn, sampler=sampler, dataset=dataset,  train=True)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=train_config.lr)
     
     # Train 
     for epoch in range(train_config.epochs):
         
-        train_loss = train_epoch(loss_fn, model, loader, optimizer, device)
-        test_loss = test_epoch(loss_fn, model, loader, device)
+        train_loss = train_epoch(loss_fn, model, loader["train"], optimizer, device)
+        test_loss = test_epoch(loss_fn, model, loader["val"], device)
         logger.info(f"Epoch {epoch}, train_loss: {train_loss}, test_loss: {test_loss}")
         wandb.log({"train_loss": train_loss, "test_loss": test_loss})
         pass
