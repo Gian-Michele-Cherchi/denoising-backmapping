@@ -8,8 +8,8 @@ import torch
 #from tqdm import tqdm 
 import copy
 import pandas as pd
-from torch_geometric.data import Dataset, DataLoader, Data
-
+from torch_geometric.data import Dataset, Data
+from torch_geometric.loader import DataLoader
 from data.featurization import featurize_pol_from_smiles
 TYPES = {'H': 0, 'C': 1}
 
@@ -23,21 +23,32 @@ def register_dataset(name: str):
         return cls
     return wrapper
 
-def get_dataset(name: str, root: str, **kwargs):
+def get_dataset(name: str, path: str,  **kwargs):
     if __DATASET__.get(name, None) is None:
         raise NameError(f"Dataset {name} is not defined.")
-    return __DATASET__[name](root=root, **kwargs)
+    return __DATASET__[name](path=path, **kwargs)
 
 @register_dataset('polymer_melt')
 class PolymerMeltDataset(Dataset):
-    def __init__(self,  dataset_path , mode, num_workers=1, device: str='cpu'):
+    def __init__(self,  path , mode,  save_ckpt:bool=True, device: str='cpu'):
         super(PolymerMeltDataset, self).__init__()
         self.device = device
-        self.path = dataset_path
-        self.num_workers = num_workers
-        
-        self.data = self.preprocessing(self.path)
-        
+        self.path = path
+        try: 
+            self.datapoints = torch.load(path+'/datapoints.pt', map_location=device)
+        except:
+            self.datapoints = self.preprocessing(self.path)
+            if save_ckpt:
+                torch.save(self.datapoints, path+'/datapoints.pt')
+        self.n_conf = self.len()
+        self.datapoints = list(self.datapoints.values())
+        if mode == 'train':
+            self.datapoints = self.datapoints[:int(0.6*self.n_conf)]
+        elif mode == 'val':
+            self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.8*self.n_conf)]
+        elif mode == 'test':
+            self.datapoints = self.datapoints[int(0.8*self.n_conf):]
+            
     def preprocessing(self, path):
         """
         Preprocess the data
@@ -47,7 +58,6 @@ class PolymerMeltDataset(Dataset):
         smiles = []
         dataset = []
         residue = "C\C=C/C"
-        mol_features = []
         for ds in listdir:
             data = self.read_lammpstraj(osp.join(path, ds, 'dump.lammpstrj'))
             dataset.append(data)
@@ -56,25 +66,35 @@ class PolymerMeltDataset(Dataset):
             
         self.smiles = set(smiles)
         self.types = set(types[0])
-        self.datapoints = self.smiles_to_graph(dataset[0])
-        return self.confs
+        confs = self.features_from_smiles(dataset[0])
+        return confs
     
     
-    def smiles_to_graph(self, dataset):
+    def features_from_smiles(self, dataset):
         
         self.mol_features= [featurize_pol_from_smiles(smile, types=self.types, hydrogens=True) for smile in self.smiles][0]
         atom_in_mon = 102
-        perm_index = []
+        n_molecules = dataset["pos"].size(1) // atom_in_mon
+        n_edges = self.mol_features[0].edge_index.size(1)
         match_order = dataset["atom_types"][:atom_in_mon]
-        for i in range(dataset["n_monomers"].max()):
-            
-            perm_index += 1 
-            
-        graph_inst = []
-        for data in dataset["pos"]:
-            assert int(self.mol_features.x.size(0) * 50) == data.size(0)
-            
-            graph_inst.append(Data(pos=data))
+        indexes_res = [i for i, x in enumerate(match_order) if x != 'H']
+        indexes_hyd = [i for i, x in enumerate(match_order) if x == 'H']
+        reindex = indexes_res + indexes_hyd
+        ext_edge_index = self.mol_features[0].edge_index.repeat(1,n_molecules)
+        const = 0 
+        assert len(reindex) == atom_in_mon
+        for i in range(n_molecules):
+            dataset["pos"][:,i*atom_in_mon:(i+1)*atom_in_mon] = dataset["pos"][:,i*atom_in_mon:(i+1)*atom_in_mon][:,reindex]
+            ext_edge_index[:,i*n_edges:(i+1)*n_edges] = const + ext_edge_index[:,i*n_edges:(i+1)*n_edges]
+            const += atom_in_mon
+        graph_inst = {}
+        for index,conf in enumerate(dataset["pos"]):
+            graph_conf = Data(x=self.mol_features[0].x.repeat(n_molecules, 1),
+                              edge_index=ext_edge_index, 
+                              edge_attr=self.mol_features[0].edge_attr.repeat(n_molecules, 1), 
+                              z=self.mol_features[0].z.repeat(n_molecules))
+            graph_conf.pos = conf
+            graph_inst["conf"+str(index)] = graph_conf
         return graph_inst
         
     def read_lammpstraj(self, filename):
@@ -89,51 +109,58 @@ class PolymerMeltDataset(Dataset):
         n_monomers = df.mol.unique()
         types  = list(df.element.unique())
         n_conf = len(df) // n_atoms
-        pos = torch.Tensor(df[['xu', 'yu', 'zu']].values).to(self.device)[None,...].view(n_conf,n_atoms, 3)
-        mol = torch.Tensor(df["mol"].values).to(self.device)[None,...].view(n_conf,n_atoms)[0]
+        pos = torch.Tensor(df[['xu', 'yu', 'zu']].values)[None,...].view(n_conf,n_atoms, 3)
+        mol = torch.Tensor(df["mol"].values)[None,...].view(n_conf,n_atoms)[0]
         atom_type = df['element'].values[:skip_index[9]-9]
         assert len(atom_type) == mol.size(0)
         del df
             
-        
-        #n_molecules = 
         return {"pos": pos,
             "mol":mol,
             "types":types,
             "atom_types":atom_type,
             "n_monomers":n_monomers}
         
+    def coarse_grain(self, ):
+        
+        for conf in batch:
+            conf = self.smiles_to_graph(conf)
     
-    def __getitem__(self, idx: int):
+    def get(self, idx: int):
         data = self.datapoints[idx]
         return copy.deepcopy(data)
     
-    def __len__(self):
+    def len(self):
         return len(self.datapoints)
             
     
-def get_dataloader(args, modes=('train', 'val')):
+def get_dataloader(args, batch_size, modes=('train', 'val')):
     """
     Get the dataloader for the dataset
     """
+    
     if isinstance(modes, str):
         modes = [modes]
         
     loaders = {}
     for mode in modes:
-        dataset = PolymerMeltDataset(args.dataset_path, mode, args.num_workers)
+        dataset = PolymerMeltDataset(**args)
         loader = DataLoader(dataset=dataset,
-                            batch_size=args.batch_size,
-                            shuffle=False if mode == 'test' else True, num_workers=args.num_workers)
-        loaders.append(loader)
-    return loaders
+                            batch_size=batch_size,
+                            shuffle=False if mode == 'test' else True, num_workers=4)
+        loaders[mode] = loader
+    return loaders, dataset
 
     
 if __name__ == "__main__":
     
-    
-    datapath = "dataset"
-    dataset = PolymerMeltDataset(datapath, 'train')
-    #print(data)
+    import argparse 
+    args = {"dataset_path":"dataset", "num_workers":4, "batch_size":32, "device": 'cuda:0'}
+    args = argparse.Namespace(**args)
+    loaders, dataset = get_dataloader(args)
+    for batch in loaders["train"]:
+        print(batch.to(args.device))
+        batch_cg = dataset.coarse_grain(batch.to(args.device))
+        break
     
     
