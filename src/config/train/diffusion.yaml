@@ -25,8 +25,11 @@ model:
   residual: True
 
 data:
-  name: ffhq
-  root: ./data/samples/
+  path: dataset
+  mode: train
+  device: 'cpu'
+  save_ckpt: True
+  
 
 conditioning:
   method: ps
@@ -47,3 +50,4 @@ train:
   gpu: 0
   lr: 1e-4
   epochs: 100
+  batch_size: 32
