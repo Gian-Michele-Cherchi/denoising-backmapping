@@ -12,7 +12,8 @@ def train_epoch(loss_fn, model, loader, optimizer, device):
         data = data.to(device)
         optimizer.zero_grad()
 
-        loss = loss_fn(model,data)
+        loss = loss_fn(model=model,
+                       batch=data)
 
         loss.backward()
         optimizer.step()
@@ -31,7 +32,8 @@ def test_epoch(loss_fn, model, loader, device):
     model.eval()
     for data in tqdm(loader, total=len(loader)):
 
-        loss = loss_fn(model,data)
+        loss = loss_fn(model=model,
+                       batch=data)
 
         loss_tot += loss.item()
         #base_tot += (score ** 2 / score_norm).mean().item()
@@ -42,17 +44,18 @@ def test_epoch(loss_fn, model, loader, device):
 
 
 
-def get_ddpm_loss_fn(sampler, model, batch, train, reduce_mean=True):
+def get_ddpm_loss_fn(sampler, dataset, model, batch, train, reduce_mean=True):
   
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
-  
-  labels = torch.randint(0, sampler.N, (batch.shape[0],), device=batch.device)
-  sqrt_alphas_cumprod = sampler.sqrt_alphas_cumprod.to(batch.device)
-  sqrt_1m_alphas_cumprod = sampler.sqrt_1m_alphas_cumprod.to(batch.device)
-  noise = torch.randn_like(batch)
-  perturbed_data = sqrt_alphas_cumprod[labels, None] * batch + \
-                    sqrt_1m_alphas_cumprod[labels, None] * noise
-  score = model(perturbed_data, labels)
+  batch_size = batch.batch.max().item() + 1 
+  t = torch.randint(0, sampler.num_timesteps, (batch_size,), device=batch.pos.device)
+  t= t.repeat_interleave(batch.pos.shape[0] // batch_size)
+  assert t.shape[0] == batch.pos.shape[0]
+  batch.node_sigma = t
+  perb_dist, noise = sampler.q_sample(batch.cg_dist, t)
+  batch.cg_perb_dist = perb_dist
+  batch = dataset.reverse_coarse_grain(batch, batch_size=batch_size)
+  score = model(batch)
   losses = torch.square(score - noise)
   losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
   loss = torch.mean(losses)
