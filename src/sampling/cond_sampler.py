@@ -137,13 +137,13 @@ class GaussianDiffusion:
         :param noise: if specified, the split-out normal noise.
         :return: A noisy version of x_start.
         """
-        noise = torch.randn_like(x_start)
+        noise = torch.randn_like(x_start).to(x_start)
         assert noise.shape == x_start.shape
         
         coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_start)
         coef2 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, x_start)
 
-        return coef1 * x_start + coef2 * noise
+        return coef1 * x_start + coef2 * noise, noise
 
     def q_posterior_mean_variance(self, x_start, x_t, t):
         """
