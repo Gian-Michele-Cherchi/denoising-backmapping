@@ -11,6 +11,7 @@ def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
     edge_index = []
     
     for batch_idx in range(box_size.shape[0]):
+        pos[batch == batch_idx] -= torch.floor(pos[batch == batch_idx] / box_size[batch_idx]) * box_size[batch_idx]
         kdtree = KDTree(pos[batch == batch_idx].cpu().numpy(), boxsize=box_size[batch_idx].cpu().numpy())
         pairs = kdtree.query_pairs(r, output_type='ndarray').swapaxes(0,1)
         edge_index.append(pairs)

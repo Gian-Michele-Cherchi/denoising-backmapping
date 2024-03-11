@@ -10,6 +10,11 @@ def gen_graph(n_nodes: int, n_mols: int, node_features_dim: int, edge_features_d
     # Generate random node positions and features
     node_positions = torch.rand(n_nodes, 3) # 2 for 3D positions
     node_features = torch.zeros(node_features_dim).unsqueeze(0).repeat(n_nodes, 1).to(device)
+    mol_id = torch.tensor(n_mols).to(device)
+    tot_mass = torch.tensor(1, dtype=torch.float64) # total monomer mass 
+    atom_monomer_id = torch.tensor(n_nodes).to(device) # [n_atoms x 1], values from 0 to n_monomers -1 
+    
+    #n_atoms_monomer = self.n_monomers*( atom_monomer_id == 0 ).sum().item() # number of atoms per polymer
     node_features[:, 0] = 1
     node_features[:, 2] = 1
     node_features[:, 6] = 1
@@ -39,7 +44,6 @@ def gen_graph(n_nodes: int, n_mols: int, node_features_dim: int, edge_features_d
     
     
 if __name__ == "__main__":
-    # Test case 1: Single batch, single point
     n_atoms = 10000
     n_batch = 16
     n_mols = 100
