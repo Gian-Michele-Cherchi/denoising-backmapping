@@ -5,7 +5,7 @@ from sampling.conditioning import get_conditioning_method
 from sampling.measurements import get_noise, get_operator
 from model.score_model import create_model
 from sampling.cond_sampler import create_sampler
-from data.dataloader import get_dataset, get_dataloader
+from data.dataset import get_dataset, get_dataloader
 from utils.logger import get_logger
 import wandb
 import hydra 
@@ -81,7 +81,7 @@ def eval(cfg: DictConfig):
         fname = str(i).zfill(5) + '.png'
         ref_img = ref_img.to(device)
 
-        # Exception) In case of inpainging,
+        # Exception In case of inpainging,
         if measure_config['operator'] ['name'] == 'inpainting':
             mask = mask_gen(ref_img)
             mask = mask[:, 0, :, :].unsqueeze(dim=0)
