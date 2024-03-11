@@ -29,6 +29,7 @@ data:
   mode: train
   device: 'cpu'
   save_ckpt: True
+  coarse_grain: True
   
 
 conditioning:
