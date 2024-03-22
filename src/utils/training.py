@@ -48,9 +48,9 @@ def get_ddpm_loss_fn(sampler, dataset, model, batch, train, reduce_mean=True):
   
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
   batch_size = batch.batch.max().item() + 1 
-  t = torch.randint(0, sampler.num_timesteps, (batch_size,), device=batch.pos.device)
-  t= t.repeat_interleave(batch.pos.shape[0] // batch_size)
-  assert t.shape[0] == batch.pos.shape[0]
+  t = torch.randint(0, sampler.num_timesteps, (batch_size,), device=batch.conf.device)
+  t= t.repeat_interleave(batch.conf.shape[0] // batch_size)
+  assert t.shape[0] == batch.conf.shape[0]
   batch.node_sigma = t
   perb_dist, noise = sampler.q_sample(batch.cg_dist, t)
   batch.cg_perb_dist = perb_dist

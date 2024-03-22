@@ -91,7 +91,7 @@ class TensorProductScoreModel(nn.Module):
         
         # The following MLP is used to embed the atom chemical features in higher dimensional space with parity invariant features of order l=0
         self.node_embedding = nn.Sequential(
-            nn.Linear(in_node_features + sigma_embed_dim, ns),
+            nn.Linear(in_node_features, ns),
             nn.ReLU(),
             nn.Linear(ns, ns)
         )
@@ -111,7 +111,7 @@ class TensorProductScoreModel(nn.Module):
                 f'{ns}x0e + {nv}x1o + {nv}x2e + {nv}x1e + {nv}x2o',
                 f'{ns}x0e + {nv}x1o + {nv}x2e + {nv}x1e + {nv}x2o + {ns}x0o'
             ]
-            irrep_last = f'{ns}x0e + {1}x1o + {nv}x2e + {nv}x1e + {nv}x2o + {ns}x0o'
+            irrep_last = f'{1}x1o'
         
         else:
             irrep_seq = [
@@ -120,7 +120,7 @@ class TensorProductScoreModel(nn.Module):
                 f'{ns}x0e + {nv}x1o + {nv}x1e',
                 f'{ns}x0e + {nv}x1o + {nv}x1e + {ns}x0o'
             ]
-            irrep_last =  f'{ns}x0e + {1}x1o + {nv}x1e + {ns}x0o'
+            irrep_last =  f'{1}x1o'
         
         for i in range(num_conv_layers):
             if i == num_conv_layers - 1:
@@ -167,14 +167,17 @@ class TensorProductScoreModel(nn.Module):
         
     def build_conv_graph(self, data):
         
+        src, dst = data.edge_index # source and destination nodes of the connected components graph
+        edge_vec = data.conf[dst.long()] - data.conf[src.long()]
         #radius_edges = radius_graph(data.pos, r=self.max_radius, batch=data.batch) #computes the radius graph of the input graph outputting the edge index of the radius graph
-        radius_edges = pbc_radius_graph(data.pos, r=self.max_radius, box_size=data.box_size, batch=data.batch)
+        radius_edges = pbc_radius_graph(data.perb_pos, r=self.max_radius, box_size=data.boxsize, batch=data.batch)
         
         # Convert to sets of tuples: check for unique edges to add non-bonded features
         edges_cc     = set(map(tuple, data.edge_index.T.cpu().numpy()))
         edges_radius = set(map(tuple, radius_edges.T.cpu().numpy()))
         unique_edges = edges_radius - edges_cc
-        non_bonded_edges_index = torch.tensor(list(unique_edges)).T.to(device) # non-bonded set of indexes
+        non_bonded_edges_index = torch.tensor(list(unique_edges)).T.to(data.x.device) # non-bonded set of indexes
+        non_bonded_edges_index = torch.cat([non_bonded_edges_index, torch.flip(non_bonded_edges_index, [0])], dim=1)
         
         non_bonded_attr       = torch.zeros(non_bonded_edges_index.shape[-1], data.edge_attr.shape[-1], device=data.x.device)
         non_bonded_attr[:, 2] = 1 # non-bonded edges are assigned a bond type of 2 
@@ -186,18 +189,23 @@ class TensorProductScoreModel(nn.Module):
         #embeddings
         node_attr, edge_attr = self.features_embedding(node_features=data.x, edge_features=edge_attr, edge_index=edge_index)
     
-        
-        log_sigma_max_min = torch.log(torch.tensor(self.sigma_max / self.sigma_min))
-        node_sigma = torch.log(data.node_sigma / self.sigma_min) / log_sigma_max_min * 10000 #normalizes the node sigma to the range [0, 1]
+    
+        node_sigma = data.node_sigma
         node_sigma_emb = get_timestep_embedding(node_sigma, self.sigma_embed_dim) #embeds the node sigma in a higher dimensional space
         
         
         edge_sigma_emb = node_sigma_emb[edge_index[0].long()] #embeds the edge sigma in a higher dimensional space
         edge_attr = torch.cat([edge_attr, edge_sigma_emb], dim=1)
-        node_attr = torch.cat([node_attr, node_sigma_emb], dim=1)
+        #node_attr = torch.cat([node_attr, node_sigma_emb], dim=1)
         
+        box_size = data.boxsize.view(data.boxsize.size(0) // 2, 2, -1)
+        d = (box_size[:,1,:] - box_size[:,0,:])
+        #wrapped_perb_pos = data.perb_pos.clone()
+        #wrapped_perb_pos -= torch.round(wrapped_perb_pos / d) * d # periodic boundary conditions  
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
-        edge_vec = data.pos[dst.long()] - data.pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
+        edge_vec = data.perb_pos[dst.long()] - data.perb_pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
+        boxsize_dst = torch.tensor(list(map(lambda i: get_boxsize_index(src[i], d), range(dst.shape[0])))).to(data.x.device)
+        edge_vec -= torch.round(edge_vec / boxsize_dst) * boxsize_dst # periodic boundary conditions
         edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
         
         edge_attr = torch.cat([edge_attr, edge_length_emb], dim=1) # concatenates the edge attributes with the edge length embedding
@@ -269,7 +277,13 @@ def create_model(
     return model
 
 
-
+def get_boxsize_index(i, d):
+    
+    i = i.long().item()
+    
+    index = i // 5100
+    return list(d[index][i].item() for i in range(0,3))
+    
 
 
 

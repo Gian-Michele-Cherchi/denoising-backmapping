@@ -17,7 +17,7 @@ model:
   ns: 32
   nv: 32
   num_conv_layers: 4 
-  max_radius: 0.02
+  max_radius: 2
   radius_embed_dim: 50
   scale_by_sigma: True
   second_order_repr: True
@@ -48,7 +48,7 @@ measurement:
     sigma: 0.05
 
 train:
-  gpu: 0
+  gpu: 1
   lr: 1e-4
   epochs: 100
   batch_size: 32
