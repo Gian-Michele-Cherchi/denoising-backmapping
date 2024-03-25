@@ -44,7 +44,7 @@ class PolymerMeltDataset(Dataset):
         self.n_conf = self.len()
         self.datapoints = list(self.datapoints.values())
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.6*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.1*self.n_conf)]
         elif mode == 'val':
             self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.8*self.n_conf)]
         elif mode == 'test':
@@ -97,7 +97,8 @@ class PolymerMeltDataset(Dataset):
                               edge_index=ext_edge_index, 
                               edge_attr=self.mol_features[0].edge_attr.repeat(self.n_molecules, 1), 
                               z=self.mol_features[0].z.repeat(self.n_molecules))
-            graph_conf.pos = conf
+            graph_conf.conf = conf
+            graph_conf.boxsize = dataset["boxsize"][index]
             graph_conf.mol = dataset["mol"]
             graph_conf.cg_dist = dataset["cg_dist"][index]
             graph_conf.cg_pos = dataset["cg_pos"][index]
@@ -110,6 +111,14 @@ class PolymerMeltDataset(Dataset):
             lines = file.readlines()
         timestep_indices = [i for i, line in enumerate(lines) if line.startswith('ITEM: TIMESTEP')]
         n_atoms_indices = [i for i, line in enumerate(lines) if line.startswith('ITEM: NUMBER OF ATOMS')]
+        boxsize_indexes = [i for i, line in enumerate(lines) if line.startswith('ITEM: BOX BOUNDS pp pp pp')]
+        boxsize_x = torch.tensor([ [float(lines[boxsize_indexes[i]+1].strip().split(' ')[0]),
+                       float(lines[boxsize_indexes[i]+1].strip().split(' ')[1])] for i in range(len(boxsize_indexes))])
+        boxsize_y = torch.tensor([[float(lines[boxsize_indexes[i]+2].strip().split(' ')[0]),
+                      float(lines[boxsize_indexes[i]+1].strip().split(' ')[1])] for i in range(len(boxsize_indexes))])
+        boxsize_z = torch.tensor([[float(lines[boxsize_indexes[i]+3].strip().split(' ')[0]),
+                      float(lines[boxsize_indexes[i]+1].strip().split(' ')[1])] for i in range(len(boxsize_indexes))])
+        boxsize = torch.cat([boxsize_x[[...,None]], boxsize_y[...,None], boxsize_z[...,None]], dim=-1)
         self.n_atoms = int(lines[n_atoms_indices[0]+1].strip().split('\n')[0])
         header = lines[timestep_indices[0]+8].strip().split(' ')[2:]
         skip_index = np.array([list(range(i,i+9)) for i in timestep_indices]).reshape(-1)
@@ -129,6 +138,7 @@ class PolymerMeltDataset(Dataset):
             "mol":mol,
             "types":types,
             "atom_types":atom_type,
+            "boxsize":boxsize,
             }
         
     def coarse_grain(self, dataset):
@@ -143,7 +153,7 @@ class PolymerMeltDataset(Dataset):
             index = index.reshape(self.n_molecules, self.atom_in_mol)
             index[select_index] = False
             index = index.reshape(self.n_molecules* self.atom_in_mol)
-            total_monomer_mass = torch.tensor(list(Counter(dataset["atom_types"][index]).values())) @ torch.tensor([1,6])
+            total_monomer_mass = torch.tensor(list(Counter(dataset["atom_types"][index]).values())) @ torch.tensor([6,1])
             self.com_matrix[i,:] = (partial_relative_mass / total_monomer_mass) * index 
 
         com_confs = torch.bmm(self.com_matrix[None,...].expand(dataset["pos"].size(0),-1,-1), dataset["pos"])
@@ -167,15 +177,15 @@ class PolymerMeltDataset(Dataset):
         Reverse the coarse graining
         """
         n_atom_in_mol = 102
-        n_atoms = batch.pos.size(0) // batch_size
+        n_atoms = batch.conf.size(0) // batch_size
         n_molecules = n_atoms  // n_atom_in_mol
-        n_monomers = batch.mol.max().item()
-        pos = batch.pos.view(batch_size, n_atoms, -1) 
+        n_monomers = int(batch.mol.max().item())
+        pos = batch.conf.view(batch_size, n_atoms, -1) 
         cg_perb_dist = batch.cg_perb_dist.view(batch_size, n_atoms, -1)
         cg_confs =  batch.cg_pos.view(batch_size, int(n_molecules*n_monomers), -1)
         atom_monomer_id = batch.mol[batch.batch == 0]
         # batch [batch_size, n_atoms, 3]
-        batch.perb_pos = pos 
+        batch.perb_pos = pos.clone()
         for i in range(int(n_monomers*n_molecules)):
             mon_id = i % n_monomers
             pol_id = i // n_monomers
@@ -213,7 +223,7 @@ def get_dataloader(args, batch_size, modes=('train', 'val')):
         dataset = PolymerMeltDataset(**args)
         loader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
-                            shuffle=False if mode == 'test' else True, num_workers=4)
+                            shuffle=False if mode == 'test' else True)
         loaders[mode] = loader
     return loaders, dataset
 
