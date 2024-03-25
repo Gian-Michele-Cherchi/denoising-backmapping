@@ -14,14 +14,16 @@ tqdm = "^4.66.2"
 PyYAML = "^6.0.1"
 yml = "^0.0.1"
 e3nn = "^0.5.1"
-torch-scatter = "^2.1.2"
-torch-cluster = "^1.6.3"
-torch-geometric = "^2.5.0"
 ipykernel = "^6.29.2"
 rdkit = "^2023.9.5"
 bigsmiles = "^0.0.10"
 matplotlib = "^3.8.3"
 MDAnalysis = "^2.7.0"
+ipympl = "^0.9.3"
+pyg = "0.4.0"
+torch-geometric = "^2.5.2"
+torch-scatter = "^2.1.2"
+
 
 [tool.poetry.dev-dependencies]
 
