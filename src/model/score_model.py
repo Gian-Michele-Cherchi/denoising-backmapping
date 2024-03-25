@@ -177,7 +177,6 @@ class TensorProductScoreModel(nn.Module):
         edges_radius = set(map(tuple, radius_edges.T.cpu().numpy()))
         unique_edges = edges_radius - edges_cc
         non_bonded_edges_index = torch.tensor(list(unique_edges)).T.to(data.x.device) # non-bonded set of indexes
-        non_bonded_edges_index = torch.cat([non_bonded_edges_index, torch.flip(non_bonded_edges_index, [0])], dim=1)
         
         non_bonded_attr       = torch.zeros(non_bonded_edges_index.shape[-1], data.edge_attr.shape[-1], device=data.x.device)
         non_bonded_attr[:, 2] = 1 # non-bonded edges are assigned a bond type of 2 
@@ -200,11 +199,11 @@ class TensorProductScoreModel(nn.Module):
         
         box_size = data.boxsize.view(data.boxsize.size(0) // 2, 2, -1)
         d = (box_size[:,1,:] - box_size[:,0,:])
-        #wrapped_perb_pos = data.perb_pos.clone()
-        #wrapped_perb_pos -= torch.round(wrapped_perb_pos / d) * d # periodic boundary conditions  
+       
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
         edge_vec = data.perb_pos[dst.long()] - data.perb_pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
-        boxsize_dst = torch.tensor(list(map(lambda i: get_boxsize_index(src[i], d), range(dst.shape[0])))).to(data.x.device)
+        #boxsize_dst = torch.tensor(list(map(lambda i: get_boxsize_index(src[i], d), range(dst.shape[0])))).to(data.x.device)
+        boxsize_dst = d[dst.long() // 5100]
         edge_vec -= torch.round(edge_vec / boxsize_dst) * boxsize_dst # periodic boundary conditions
         edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
         
