@@ -48,7 +48,8 @@ measurement:
     sigma: 0.05
 
 train:
-  gpu: 1
+  gpu: 0
   lr: 1e-4
-  epochs: 100
-  batch_size: 32
+  epochs: 3
+  batch_size: 6
+  parallel: True
