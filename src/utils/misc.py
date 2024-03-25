@@ -12,15 +12,19 @@ def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
     perb_pos = pos.clone()
     box_size = box_size.view(box_size.size(0) // 2,2,-1)
     for batch_idx in range(box_size.shape[0]):
-        d =  - box_size[None,batch_idx][:,0] + box_size[None,batch_idx][:,1] 
-        perb_pos[batch == batch_idx] -= torch.floor(perb_pos[batch == batch_idx] / d.expand((batch == batch_idx).sum(), -1)) * d.expand((batch == batch_idx).sum(), -1)
+        d =  - box_size[None,batch_idx][:,0] + box_size[None,batch_idx][:,1]
+        perb_pos[batch == batch_idx] -= torch.floor(perb_pos[batch == batch_idx] / d) * d
         kdtree = KDTree(perb_pos[batch == batch_idx].cpu().numpy(), boxsize=d.cpu().numpy())
-        pairs = np.array(kdtree.query_pairs(r, output_type='ndarray').swapaxes(0,1))
-        #edge_index.append(pairs)
+        pairs = np.array(kdtree.query_pairs(r, output_type='ndarray').swapaxes(0,1)) + batch_idx * perb_pos[batch == batch_idx].size(0)
+        
         edge_index = np.concatenate([edge_index, pairs, np.flip(pairs, axis=0)], axis=1)
+        #edge_index_conf = np.concatenate([pairs, np.flip(pairs, axis=0)], axis=1)
+        #src, dst = torch.tensor(edge_index_conf, dtype=torch.long).contiguous()
+        #edge_vec = perb_pos[batch == batch_idx][dst.long()] - perb_pos[batch == batch_idx][src.long()]
+        #edge_vec -= torch.round(edge_vec / d[0]) * d[0] # periodic boundary conditions
+        
     edge_index = torch.tensor(edge_index, dtype=torch.long).contiguous()
-    src, dst = edge_index # source and destination nodes of the radius graph + the original graph
-    edge_vec = perb_pos[dst.long()] - perb_pos[src.long()]
+    
     return edge_index
 
 
