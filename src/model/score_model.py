@@ -47,6 +47,7 @@ class TensorProductConvLayer(nn.Module):
         
         edge_src, edge_dst = edge_index
         #tensor product weights are shared across all edges
+
         weigths = self.fc(edge_attr) # n_edges x weight_numel
         
         #The node attributes are lifted up to the edge representation
@@ -162,21 +163,20 @@ class TensorProductScoreModel(nn.Module):
             node_attr = layer(node_attr, edge_index, edge_attr_, edge_sh, reduce="mean")
         
         
-        return node_attr, edge_index
+        return node_attr
             
         
     def build_conv_graph(self, data):
         
         src, dst = data.edge_index # source and destination nodes of the connected components graph
         edge_vec = data.conf[dst.long()] - data.conf[src.long()]
-        #radius_edges = radius_graph(data.pos, r=self.max_radius, batch=data.batch) #computes the radius graph of the input graph outputting the edge index of the radius graph
-        radius_edges = pbc_radius_graph(data.perb_pos, r=self.max_radius, box_size=data.boxsize, batch=data.batch)
         
+        radius_edges = pbc_radius_graph(data.perb_pos.detach().clone(), r=self.max_radius, d=data.boxsize, batch=data.batch)
         # Convert to sets of tuples: check for unique edges to add non-bonded features
-        edges_cc     = set(map(tuple, data.edge_index.T.cpu().numpy()))
-        edges_radius = set(map(tuple, radius_edges.T.cpu().numpy()))
+        edges_cc     = set(map(tuple, data.edge_index.permute(1,0).cpu().numpy()))
+        edges_radius = set(map(tuple, radius_edges.permute(1,0).cpu().numpy()))
         unique_edges = edges_radius - edges_cc
-        non_bonded_edges_index = torch.tensor(list(unique_edges)).T.to(data.x.device) # non-bonded set of indexes
+        non_bonded_edges_index = torch.tensor(list(unique_edges)).permute(1,0).to(data.x.device) # non-bonded set of indexes
         
         non_bonded_attr       = torch.zeros(non_bonded_edges_index.shape[-1], data.edge_attr.shape[-1], device=data.x.device)
         non_bonded_attr[:, 2] = 1 # non-bonded edges are assigned a bond type of 2 
@@ -197,14 +197,13 @@ class TensorProductScoreModel(nn.Module):
         edge_attr = torch.cat([edge_attr, edge_sigma_emb], dim=1)
         #node_attr = torch.cat([node_attr, node_sigma_emb], dim=1)
         
-        box_size = data.boxsize.view(data.boxsize.size(0) // 2, 2, -1)
-        d = (box_size[:,1,:] - box_size[:,0,:])
+        d = data.boxsize
        
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
         edge_vec = data.perb_pos[dst.long()] - data.perb_pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
-        #boxsize_dst = torch.tensor(list(map(lambda i: get_boxsize_index(src[i], d), range(dst.shape[0])))).to(data.x.device)
+      
         boxsize_dst = d[dst.long() // 5100]
-        edge_vec -= torch.round(edge_vec / boxsize_dst) * boxsize_dst # periodic boundary conditions
+        edge_vec -= torch.round(edge_vec / boxsize_dst[...,None]) * boxsize_dst[...,None] # periodic boundary conditions
         edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
         
         edge_attr = torch.cat([edge_attr, edge_length_emb], dim=1) # concatenates the edge attributes with the edge length embedding
@@ -235,6 +234,7 @@ class TensorProductScoreModel(nn.Module):
         
         return node_attr, edge_attr
     
+    
 
 class GaussianSmearing(torch.nn.Module):
     def __init__(self, start=0.0, stop=5.0, num_gaussians=50):
@@ -261,31 +261,17 @@ def create_model(
     second_order_repr,
     batch_norm, 
     residual,
-    model_path="",
+    model_path=None,
     ):
 
     model= TensorProductScoreModel(in_node_features=in_node_features, in_edge_features=in_edge_features, sigma_embed_dim=sigma_embed_dim, 
                                     sh_lmax=sh_lmax, ns=ns, nv=nv, num_conv_layers=num_conv_layers, max_radius=max_radius, 
                                     radius_embed_dim=radius_embed_dim,
                                     second_order_repr=second_order_repr, batch_norm=batch_norm, residual=residual, scale_by_sigma=scale_by_sigma)
-
-    try:
+    if model_path is not None:
         model.load_state_dict(torch.load(model_path, map_location='cpu'))
-    except Exception as e:
-        print(f"Got exception: {e} / Randomly initialize")
+    
     return model
-
-
-def get_boxsize_index(i, d):
-    
-    i = i.long().item()
-    
-    index = i // 5100
-    return list(d[index][i].item() for i in range(0,3))
-    
-
-
-
 
 if __name__ == "__main__":
     
