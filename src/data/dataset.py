@@ -11,6 +11,7 @@ import pandas as pd
 from torch_geometric.data import Dataset, Data
 from torch_geometric.loader import DataLoader
 from data.featurization import featurize_pol_from_smiles
+
 TYPES = {'H': 0, 'C': 1}
 ATOMIC_NUMBERS = {'H': 1, 'C': 6}
 __DATASET__ = {}
@@ -44,7 +45,7 @@ class PolymerMeltDataset(Dataset):
         self.n_conf = self.len()
         self.datapoints = list(self.datapoints.values())
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.1*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.6*self.n_conf)]
         elif mode == 'val':
             self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.8*self.n_conf)]
         elif mode == 'test':
@@ -98,10 +99,11 @@ class PolymerMeltDataset(Dataset):
                               edge_attr=self.mol_features[0].edge_attr.repeat(self.n_molecules, 1), 
                               z=self.mol_features[0].z.repeat(self.n_molecules))
             graph_conf.conf = conf
-            graph_conf.boxsize = dataset["boxsize"][index]
+            graph_conf.boxsize = dataset["boxsize"][index,1] -dataset["boxsize"][index,0]
             graph_conf.mol = dataset["mol"]
             graph_conf.cg_dist = dataset["cg_dist"][index]
             graph_conf.cg_pos = dataset["cg_pos"][index]
+            graph_conf.cg_std_dist = dataset["var_dist"]
             graph_inst["conf"+str(index)] = graph_conf
             
         return graph_inst
@@ -169,6 +171,7 @@ class PolymerMeltDataset(Dataset):
             index[select_index] = False
             index = index.reshape(self.n_molecules* self.atom_in_mol)
             dist[:,index] = dataset["pos"][:,index] -dataset["cg_pos"][:,i:i+1].repeat(1,index.sum().item(),1)
+        dataset["var_dist"] = dist.norm(dim=2).std()
         dataset["cg_dist"] = dist
         return dataset
     
@@ -194,7 +197,7 @@ class PolymerMeltDataset(Dataset):
             index = index.reshape(n_molecules, n_atom_in_mol)
             index[select_index] = False
             index = index.reshape(int(n_molecules* n_atom_in_mol))
-            batch.perb_pos[:,index] = cg_confs[:,i:i+1].repeat(1,index.sum().item(),1) + cg_perb_dist[:,index]
+            batch.perb_pos[:,index] = cg_confs[:,i:i+1].repeat(1,index.sum().item(),1) +  cg_perb_dist[:,index]
         batch.perb_pos = batch.perb_pos.reshape(-1,3)
         return batch
     
@@ -210,22 +213,27 @@ class PolymerMeltDataset(Dataset):
         return len(self.datapoints)
             
     
-def get_dataloader(args, batch_size, modes=('train', 'val')):
+def get_dataloader(args, batch_size,rank, world_size, modes=('train', 'val')):
     """
     Get the dataloader for the dataset
     """
     
     if isinstance(modes, str):
         modes = [modes]
-        
+    
     loaders = {}
     for mode in modes:
-        dataset = PolymerMeltDataset(**args)
+        dataset = PolymerMeltDataset(**args, mode=mode)
+        torch.manual_seed(12345)
+        #chunks = len(dataset) // world_size
+        #dataset = dataset[int(rank*chunks):int((rank+1)*chunks)]
         loader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
-                            shuffle=False if mode == 'test' else True)
+                            shuffle=False if mode == 'test' else True,
+        )
         loaders[mode] = loader
     return loaders, dataset
+    
 
     
 if __name__ == "__main__":
