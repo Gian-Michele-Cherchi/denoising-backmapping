@@ -7,3 +7,5 @@
 *src/utils/__pycache__
 *outputs
 *notebooks
+*save
+nohup.out
