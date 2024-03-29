@@ -6,25 +6,21 @@ import math
 from torch.nn import functional as F
 
 # The following function computes the radius graph of the input nodes positions using KDTrees and the box size
-def pbc_radius_graph(pos: Tensor, r: float, box_size: Tensor, batch=None):
+def pbc_radius_graph(perb_pos: Tensor, r: float, d: Tensor, batch=None):
     # KDTree generation for batched positions input
-    edge_index = np.array([[],[]])
-    perb_pos = pos.clone()
-    box_size = box_size.view(box_size.size(0) // 2,2,-1)
-    for batch_idx in range(box_size.shape[0]):
-        d =  - box_size[None,batch_idx][:,0] + box_size[None,batch_idx][:,1]
-        perb_pos[batch == batch_idx] -= torch.floor(perb_pos[batch == batch_idx] / d) * d
-        kdtree = KDTree(perb_pos[batch == batch_idx].cpu().numpy(), boxsize=d.cpu().numpy())
+   
+    edge_index = torch.tensor([[],[]]).to(d)
+    for batch_idx in range(d.shape[0]):
+        
+        perb_pos[batch == batch_idx] -= torch.floor(perb_pos[batch == batch_idx] / d[batch_idx]) * d[batch_idx]
+        kdtree = KDTree(perb_pos[batch == batch_idx].cpu().numpy(), boxsize=d[batch_idx].cpu().numpy())
         pairs = np.array(kdtree.query_pairs(r, output_type='ndarray').swapaxes(0,1)) + batch_idx * perb_pos[batch == batch_idx].size(0)
         
-        edge_index = np.concatenate([edge_index, pairs, np.flip(pairs, axis=0)], axis=1)
-        #edge_index_conf = np.concatenate([pairs, np.flip(pairs, axis=0)], axis=1)
-        #src, dst = torch.tensor(edge_index_conf, dtype=torch.long).contiguous()
-        #edge_vec = perb_pos[batch == batch_idx][dst.long()] - perb_pos[batch == batch_idx][src.long()]
-        #edge_vec -= torch.round(edge_vec / d[0]) * d[0] # periodic boundary conditions
-        
-    edge_index = torch.tensor(edge_index, dtype=torch.long).contiguous()
-    
+        edge_index = torch.concatenate([edge_index, 
+                                        torch.tensor(pairs.copy()).to(d), 
+                                        torch.tensor(np.flip(pairs, axis=0).copy()).to(d)], axis=1)
+        del kdtree
+        del pairs
     return edge_index
 
 
