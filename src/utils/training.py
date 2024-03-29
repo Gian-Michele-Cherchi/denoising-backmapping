@@ -52,7 +52,7 @@ def get_ddpm_loss_fn(sampler, dataset, model, batch, reduce_mean=True):
   assert t.shape[0] == batch.conf.shape[0]
   batch.node_sigma = t
   perb_dist, noise = sampler.q_sample(batch.cg_dist, t)
-  batch.cg_perb_dist = perb_dist  #/  batch.cg_std_dist.mean().item()
+  batch.cg_perb_dist = perb_dist  /  batch.cg_std_dist[0]
   batch = dataset.reverse_coarse_grain(batch, batch_size=batch_size)
   score = model(batch)
   losses = torch.square(score - noise)
@@ -107,7 +107,6 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
         test_loss = test_epoch(loss_fn, ddp_model, loader["val"], rank)
         #dist.barrier()
         if rank == 0:
-            
             logger.info(f"Epoch {epoch+1}, train_loss: {train_loss}, test_loss: {test_loss} ")
             run.log({"epoch": epoch+1, "train_loss": train_loss, "test_loss": test_loss})
             
