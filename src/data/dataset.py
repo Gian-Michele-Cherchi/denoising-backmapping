@@ -1,4 +1,5 @@
 import os.path as osp
+import random
 import os 
 from multiprocessing import Pool
 from collections import Counter
@@ -44,10 +45,11 @@ class PolymerMeltDataset(Dataset):
                 torch.save(self.datapoints, path+'/datapoints.pt')
         self.n_conf = self.len()
         self.datapoints = list(self.datapoints.values())
+        random.shuffle(self.datapoints)
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.6*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.5*self.n_conf)]
         elif mode == 'val':
-            self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.8*self.n_conf)]
+            self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.7*self.n_conf)]
         elif mode == 'test':
             self.datapoints = self.datapoints[int(0.8*self.n_conf):]
             
@@ -103,7 +105,7 @@ class PolymerMeltDataset(Dataset):
             graph_conf.mol = dataset["mol"]
             graph_conf.cg_dist = dataset["cg_dist"][index]
             graph_conf.cg_pos = dataset["cg_pos"][index]
-            graph_conf.cg_std_dist = dataset["var_dist"]
+            graph_conf.cg_std_dist = dataset["cg_std_dist"]
             graph_inst["conf"+str(index)] = graph_conf
             
         return graph_inst
@@ -128,8 +130,8 @@ class PolymerMeltDataset(Dataset):
         self.n_monomers = df.mol.unique().max()
         types  = list(df.element.unique())
         n_conf = len(df) // self.n_atoms
-        pos = torch.Tensor(df[['xu', 'yu', 'zu']].values)[None,...].view(n_conf,self.n_atoms, 3)
-        mol = torch.Tensor(df["mol"].values)[None,...].view(n_conf,self.n_atoms)[0]
+        pos = torch.tensor(df[['xu', 'yu', 'zu']].values, dtype=torch.double)[None,...].view(n_conf,self.n_atoms, 3)
+        mol = torch.tensor(df["mol"].values)[None,...].view(n_conf,self.n_atoms)[0]
         atom_type = df['element'].values[:skip_index[9]-9]
         self.atom_in_mol = 102
         self.n_molecules = pos.size(1) // self.atom_in_mol
@@ -145,7 +147,7 @@ class PolymerMeltDataset(Dataset):
         
     def coarse_grain(self, dataset):
         atom_monomer_id = dataset["mol"]# [n_atoms x 1], values from 1 to n_monomers 
-        self.com_matrix = torch.zeros(self.n_molecules * self.n_monomers, self.n_atoms, device=self.device)
+        self.com_matrix = torch.zeros(self.n_molecules * self.n_monomers, self.n_atoms, device=self.device, dtype=torch.double)
         partial_relative_mass = torch.tensor([ATOMIC_NUMBERS[dataset["atom_types"][i]] for i in range(len(dataset["atom_types"]))])
         for i in range(self.n_monomers*self.n_molecules):
             mon_id = i % self.n_monomers
@@ -160,7 +162,7 @@ class PolymerMeltDataset(Dataset):
 
         com_confs = torch.bmm(self.com_matrix[None,...].expand(dataset["pos"].size(0),-1,-1), dataset["pos"])
         dataset["cg_pos"] = com_confs
-        dist = torch.zeros(dataset["pos"].size(0), self.n_molecules*self.atom_in_mol,3)
+        dist = torch.zeros(dataset["pos"].size(0), self.n_molecules*self.atom_in_mol,3, dtype=torch.float64, device=self.device)
         ################################
         for i in range(self.n_monomers*self.n_molecules):
             mon_id = i % self.n_monomers
@@ -171,7 +173,7 @@ class PolymerMeltDataset(Dataset):
             index[select_index] = False
             index = index.reshape(self.n_molecules* self.atom_in_mol)
             dist[:,index] = dataset["pos"][:,index] -dataset["cg_pos"][:,i:i+1].repeat(1,index.sum().item(),1)
-        dataset["var_dist"] = dist.norm(dim=2).std()
+        dataset["cg_std_dist"] = dist.norm(dim=2).std()
         dataset["cg_dist"] = dist
         return dataset
     
@@ -187,7 +189,6 @@ class PolymerMeltDataset(Dataset):
         cg_perb_dist = batch.cg_perb_dist.view(batch_size, n_atoms, -1)
         cg_confs =  batch.cg_pos.view(batch_size, int(n_molecules*n_monomers), -1)
         atom_monomer_id = batch.mol[batch.batch == 0]
-        # batch [batch_size, n_atoms, 3]
         batch.perb_pos = pos.clone()
         for i in range(int(n_monomers*n_molecules)):
             mon_id = i % n_monomers

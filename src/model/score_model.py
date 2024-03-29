@@ -33,6 +33,7 @@ class TensorProductConvLayer(nn.Module):
         self.residual = residual
         
         self.tp = o3.FullyConnectedTensorProduct(in_irreps, sh_irreps, out_irreps, shared_weights=False)
+        self.tp = self.tp.double()
         
         # n_edge_features is the number of features per edge in the subgraph (in the classic example would be the embedding of the radial basis representation of the distance)
         #the following layer is used to transform the edge features to the correct dimension for the tensor product layer
@@ -41,6 +42,7 @@ class TensorProductConvLayer(nn.Module):
             nn.ReLU(),
             nn.Linear(n_edge_features, self.tp.weight_numel)
         )
+        self.fc = self.fc.double()
         self.batch_norm = BatchNorm(out_irreps) if batch_norm else None
         
     def forward(self, node_attr, edge_index, edge_attr, edge_sh, out_nodes=None, reduce="mean"):
@@ -102,6 +104,8 @@ class TensorProductScoreModel(nn.Module):
             nn.ReLU(),
             nn.Linear(nv, nv)
         )
+        self.edge_embedding = self.edge_embedding.double()
+        self.node_embedding =  self.node_embedding.double()
         self.distance_expansion = GaussianSmearing(0.0, max_radius, radius_embed_dim)
         conv_layers  = []
         
@@ -155,12 +159,13 @@ class TensorProductScoreModel(nn.Module):
         node_attr, edge_index, edge_attr, edge_sh = self.build_conv_graph(data)
         src, dst = edge_index
         
-        node_attr = self.node_embedding(node_attr)
+        node_attr = self.node_embedding(node_attr.double())
         edge_attr = self.edge_embedding(edge_attr)
         
         for layer in self.conv_layers:
             edge_attr_ = torch.cat([edge_attr, node_attr[src, :self.ns], node_attr[dst, :self.ns]], -1)
             node_attr = layer(node_attr, edge_index, edge_attr_, edge_sh, reduce="mean")
+            torch.cuda.empty_cache()
         
         
         return node_attr
@@ -230,7 +235,7 @@ class TensorProductScoreModel(nn.Module):
         lifted_node_attr = node_attr[edge_index].permute(1,2,0)
         lifted_node_attr = lifted_node_attr[:,:, 0] + lifted_node_attr[:,:, 1] 
         
-        edge_attr = torch.cat([lifted_node_attr, bond_type_emb], dim=1).to(node_features)
+        edge_attr = torch.cat([lifted_node_attr, bond_type_emb], dim=1).to(node_features).double()
         
         return node_attr, edge_attr
     
