@@ -47,11 +47,11 @@ class PolymerMeltDataset(Dataset):
         self.datapoints = list(self.datapoints.values())
         random.shuffle(self.datapoints)
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.5*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.7*self.n_conf)]
         elif mode == 'val':
-            self.datapoints = self.datapoints[int(0.6*self.n_conf):int(0.7*self.n_conf)]
+            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.9*self.n_conf)]
         elif mode == 'test':
-            self.datapoints = self.datapoints[int(0.8*self.n_conf):]
+            self.datapoints = self.datapoints[int(0.9*self.n_conf):]
             
     def preprocessing(self, path):
         """
@@ -85,7 +85,9 @@ class PolymerMeltDataset(Dataset):
         self.reindex = indexes_res + indexes_hyd
         ext_edge_index = self.mol_features[0].edge_index.repeat(1,self.n_molecules)
         const = 0 
-        assert len(self.reindex) == self.atom_in_mol
+        #assert len(self.reindex) == self.atom_in_mol
+        carbon_index =[]
+        edge_carbon_index = []
         for i in range(self.n_molecules):
             dataset["pos"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["pos"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol][:,self.reindex]
             dataset["mol"][i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["mol"][i*self.atom_in_mol:(i+1)*self.atom_in_mol][self.reindex]
@@ -93,19 +95,22 @@ class PolymerMeltDataset(Dataset):
             dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol][:,self.reindex]
             #self.com_matrix[i*self.n_monomers:(i+1)*self.n_monomers] = self.com_matrix[i*self.n_monomers:(i+1)*self.n_monomers][:,self.reindex]
             ext_edge_index[:,i*n_edges:(i+1)*n_edges] = const + ext_edge_index[:,i*n_edges:(i+1)*n_edges]
-            const += self.atom_in_mol
+            carbon_index += [i for i in range(i*self.atom_in_mol, (i+1)*self.atom_in_mol - 62 ) ]
+            edge_carbon_index += [i for i in range(i*n_edges, (i+1)*n_edges- 124) ] 
+            #const += self.atom_in_mol
+            const += 40
         graph_inst = {}
         for index,conf in enumerate(dataset["pos"]):
-            graph_conf = Data(x=self.mol_features[0].x.repeat(self.n_molecules, 1),
-                              edge_index=ext_edge_index, 
-                              edge_attr=self.mol_features[0].edge_attr.repeat(self.n_molecules, 1), 
-                              z=self.mol_features[0].z.repeat(self.n_molecules))
-            graph_conf.conf = conf
+            graph_conf = Data(x=self.mol_features[0].x[:40].repeat(self.n_molecules, 1),
+                              edge_index=ext_edge_index[:,edge_carbon_index], 
+                              edge_attr=self.mol_features[0].edge_attr[:78].repeat(self.n_molecules, 1), 
+                              z=self.mol_features[0].z[:40].repeat(self.n_molecules))
+            graph_conf.conf = conf[carbon_index]
             graph_conf.boxsize = dataset["boxsize"][index,1] -dataset["boxsize"][index,0]
-            graph_conf.mol = dataset["mol"]
-            graph_conf.cg_dist = dataset["cg_dist"][index]
+            graph_conf.mol = dataset["mol"][carbon_index]
+            graph_conf.cg_dist = dataset["cg_dist"][index, carbon_index]
             graph_conf.cg_pos = dataset["cg_pos"][index]
-            graph_conf.cg_std_dist = dataset["cg_std_dist"]
+            graph_conf.cg_std_dist = graph_conf.cg_dist.norm(dim=1).std()
             graph_inst["conf"+str(index)] = graph_conf
             
         return graph_inst
@@ -173,7 +178,7 @@ class PolymerMeltDataset(Dataset):
             index[select_index] = False
             index = index.reshape(self.n_molecules* self.atom_in_mol)
             dist[:,index] = dataset["pos"][:,index] -dataset["cg_pos"][:,i:i+1].repeat(1,index.sum().item(),1)
-        dataset["cg_std_dist"] = dist.norm(dim=2).std()
+        #dataset["cg_std_dist"] = dist.norm(dim=2).std()
         dataset["cg_dist"] = dist
         return dataset
     
@@ -181,7 +186,7 @@ class PolymerMeltDataset(Dataset):
         """
         Reverse the coarse graining
         """
-        n_atom_in_mol = 102
+        n_atom_in_mol = 40
         n_atoms = batch.conf.size(0) // batch_size
         n_molecules = n_atoms  // n_atom_in_mol
         n_monomers = int(batch.mol.max().item())
