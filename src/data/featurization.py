@@ -75,7 +75,7 @@ def featurize_polymer(polymer, types):
     x = torch.cat([x1.to(torch.float), x2], dim=-1)
     #x = x1
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z), types
+    return Data(x=x[:,2:], edge_index=edge_index, edge_attr=edge_attr, z=z), types
 
 
 def featurize_pol_from_smiles(smiles_rep: str, types:list, hydrogens: bool = False):
