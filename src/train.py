@@ -39,9 +39,14 @@ def train_app(cfg: DictConfig) -> None:
                 )
     else:
         gpu_id = train_config.gpu_id
-        run_process(gpu_id,ddp, world_size, device, train_config, diffusion_config, data_config, model_config, run)
-        
-
+        run_process(gpu_id,ddp, 
+                    world_size, 
+                    device, 
+                    train_config, 
+                    diffusion_config, 
+                    data_config, 
+                    model_config, 
+                    run)
     
 if __name__ == "__main__":
     train_app()
