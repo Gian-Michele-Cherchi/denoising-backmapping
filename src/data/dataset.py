@@ -1,12 +1,9 @@
 import os.path as osp
+import os
 import random
-import os 
-from multiprocessing import Pool
 from collections import Counter
-from rdkit import Chem
 import numpy as np 
 import torch
-#from tqdm import tqdm 
 import copy
 import pandas as pd
 from torch_geometric.data import Dataset, Data
@@ -47,9 +44,9 @@ class PolymerMeltDataset(Dataset):
         self.datapoints = list(self.datapoints.values())
         random.shuffle(self.datapoints)
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.7*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.010*self.n_conf)]
         elif mode == 'val':
-            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.9*self.n_conf)]
+            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.701*self.n_conf)]
         elif mode == 'test':
             self.datapoints = self.datapoints[int(0.9*self.n_conf):]
             
@@ -110,7 +107,7 @@ class PolymerMeltDataset(Dataset):
             graph_conf.mol = dataset["mol"][carbon_index]
             graph_conf.cg_dist = dataset["cg_dist"][index, carbon_index]
             graph_conf.cg_pos = dataset["cg_pos"][index]
-            graph_conf.cg_std_dist = graph_conf.cg_dist.norm(dim=1).std()
+            graph_conf.cg_std_dist = torch.sqrt(torch.trace(graph_conf.cg_dist.T @ graph_conf.cg_dist) / (3*graph_conf.cg_dist.size(0)))
             graph_inst["conf"+str(index)] = graph_conf
             
         return graph_inst
@@ -203,7 +200,7 @@ class PolymerMeltDataset(Dataset):
             index = index.reshape(n_molecules, n_atom_in_mol)
             index[select_index] = False
             index = index.reshape(int(n_molecules* n_atom_in_mol))
-            batch.perb_pos[:,index] = cg_confs[:,i:i+1].repeat(1,index.sum().item(),1) +  cg_perb_dist[:,index]
+            batch.perb_pos[:,index] = cg_confs[:,i:i+1].repeat(1,index.sum().item(),1) +  batch.cg_std_dist[...,None,None] * cg_perb_dist[:,index]
         batch.perb_pos = batch.perb_pos.reshape(-1,3)
         return batch
     
