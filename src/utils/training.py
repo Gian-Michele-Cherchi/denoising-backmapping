@@ -112,19 +112,17 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
         #train_loader = partition_batch(rank, world_size, loader["train"])
         #dist.barrier()
         train_loss, train_std = train_epoch(loss_fn, ddp_model, loader["train"], optimizer, rank)
-        dist.barrier()
+        #dist.barrier()
         test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
-        print("after test loss")
+       
         dist.barrier()
-        print("outside")
+       
         if rank == 0:
-            #print("inside rank 0")
             #test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
-            print("after test rank 0")
             logger.info(f"Epoch {epoch+1}, train_loss: {train_loss}, test_loss: {test_loss} ")
             run.log({"epoch": epoch+1, "train_loss": train_loss, "test_loss": test_loss, 
                      "train_std": train_std, "test_std": test_std})
-        print("before 2nd if")   
+           
         if rank == 0 and epoch % train_config.checkpt_freq == 0 and train_config.save:
             checkpoint_path = os.path.join(savepath, f"checkpoint_{epoch+1}.h5")
             torch.save(ddp_model.state_dict(), checkpoint_path)
@@ -135,10 +133,9 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
                               "best_test_loss": best_loss})
                     checkpoint_path = os.path.join(savepath, "best_model.h5")
                     torch.save(model.state_dict(), checkpoint_path)
-                    run.save(checkpoint_path, base_path=train_config.savepath)
-        print("before 2nd barrier")            
-        dist.barrier()
-        print("after 2nd barrier")
+                    run.save(checkpoint_path, base_path=train_config.savepath)    
+        #dist.barrier()
+
     clean() if ddp else None
     
     
