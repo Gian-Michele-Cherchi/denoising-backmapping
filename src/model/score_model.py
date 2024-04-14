@@ -1,10 +1,7 @@
-import math 
-
 from e3nn import o3
 import torch
 from torch import nn
 from torch.nn import functional as F
-#from torch_cluster import radius_graph
 from torch_scatter import scatter
 import numpy as np 
 from e3nn.nn import BatchNorm
