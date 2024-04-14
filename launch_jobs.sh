@@ -9,4 +9,4 @@
 #SBATCH --gres=gpu:a100:1
 
 
-#poetry run python src/train.py train=diffusion
+poetry run python src/train.py train=diffusion
