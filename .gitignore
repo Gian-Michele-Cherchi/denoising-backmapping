@@ -9,3 +9,4 @@
 *notebooks
 *save
 nohup.out
+*slurm-*.out
