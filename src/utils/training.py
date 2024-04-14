@@ -1,3 +1,4 @@
+import os
 from os import makedirs
 import numpy as np
 from tqdm import tqdm
@@ -12,9 +13,8 @@ from sampling.cond_sampler import create_sampler
 from data.dataset import get_dataloader
 from utils.logger import get_logger
 
-import os
 def train_epoch(loss_fn, model, loader, optimizer, rank: int):
-    loss_tot = 0
+    loss_tot = []
     #rank = 'cpu'
     model.train()
     for data in tqdm(loader, total=len(loader)):
@@ -23,23 +23,27 @@ def train_epoch(loss_fn, model, loader, optimizer, rank: int):
                        batch=data.to(rank))
         loss.backward()
         optimizer.step()
-        loss_tot += loss.detach().item()
-    loss_avg = loss_tot / len(loader)
-    return loss_avg
+        loss_tot.append(loss.detach().item())
+    loss_avg = np.mean(loss_tot)
+    loss_std = np.std(loss_tot)
+    return loss_avg, loss_std
 
 
 def test_epoch(loss_fn, model, loader, rank: int):
-    loss_tot = 0
+    loss_tot = []
     #rank = 'cpu'
     model.eval()
     for data in tqdm(loader, total=len(loader)):
         with torch.no_grad():
+            print("before loss_fn")
             loss = loss_fn(model=model,
                         batch=data.to(rank))
-        loss_tot += loss.item()
-        
-    loss_avg = loss_tot / len(loader)
-    return loss_avg
+        print("before append loss")
+        loss_tot.append(loss.item())
+    print("before loss_avg")
+    loss_avg = np.mean(loss_tot)
+    loss_std = np.std(loss_tot)
+    return loss_avg, loss_std
 
 
 
@@ -51,8 +55,9 @@ def get_ddpm_loss_fn(sampler, dataset, model, batch, reduce_mean=True):
   t= t.repeat_interleave(batch.conf.shape[0] // batch_size)
   assert t.shape[0] == batch.conf.shape[0]
   batch.node_sigma = t
-  perb_dist, noise = sampler.q_sample(batch.cg_dist, t)
-  batch.cg_perb_dist = perb_dist  /  batch.cg_std_dist[0]
+  sigma = batch.cg_std_dist.repeat_interleave(batch.conf.shape[0] // batch_size)
+  perb_dist, noise = sampler.q_sample(batch.cg_dist / sigma[...,None], t)
+  batch.cg_perb_dist = perb_dist
   batch = dataset.reverse_coarse_grain(batch, batch_size=batch_size)
   score = model(batch)
   losses = torch.square(score - noise)
@@ -63,12 +68,10 @@ def get_ddpm_loss_fn(sampler, dataset, model, batch, reduce_mean=True):
 
 
 def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffusion_config, data_config ,model_config, run):
-    
+    checkpt = False
     logger = get_logger()
-    #assert train_config.batch_size % world_size == 0, "Batch size must be divisible by the number of devices."
-    #os.environ['MASTER_ADDR'] = 'localhost'
-    #os.environ['MASTER_PORT'] = '12345'
-    #dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
+    
+    setup(train_config.batch_size, world_size, rank) if ddp else None
     
     # Dataset 
     loader, dataset = get_dataloader(data_config, 
@@ -80,36 +83,48 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
     sampler = create_sampler(**diffusion_config) 
     # Loss function 
     loss_fn = partial(get_ddpm_loss_fn, sampler=sampler, dataset=dataset)
-
-    
     torch.manual_seed(12345)
     model = create_model(**model_config)
     model = model.to(rank if device == 'gpu' else 'cpu')
-    if ddp:
-        ddp_model = DistributedDataParallel(model, 
-                                            device_ids=[rank] if device == 'gpu' else None, 
-                                            find_unused_parameters=True)
-    else:
-        ddp_model = model
+    # checkpoints 
+    if checkpt:
+        checkpt_path = os.path.join(train_config.savepath, run.name, 
+                                    "checkpoint"+str(train_config.checkpt_epoch)+".h5")
+        checkpoint = torch.load(checkpt_path)
+        model.load_state_dict(checkpoint)
+        
+    ddp_model = get_ddp_model(model, rank, device, ddp)
+    
     optimizer = torch.optim.Adam(ddp_model.parameters(), lr=train_config.lr)
     
-    best_loss = np.inf
     if train_config.save:
         savepath = os.path.join(train_config.savepath, run.name)
         makedirs(savepath, exist_ok=True)
         
     # Train & Val
-    for epoch in range(train_config.epochs):
+    best_loss = np.inf
+    if checkpt:
+        n_start = train_config.checkpt_epoch
+    else:
+        n_start = 0
+    for epoch in range(n_start, train_config.epochs):
         
         #train_loader = partition_batch(rank, world_size, loader["train"])
-        train_loss = train_epoch(loss_fn, ddp_model, loader["train"], optimizer, rank)
         #dist.barrier()
-        test_loss = test_epoch(loss_fn, ddp_model, loader["val"], rank)
-        #dist.barrier()
+        train_loss, train_std = train_epoch(loss_fn, ddp_model, loader["train"], optimizer, rank)
+        dist.barrier()
+        test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
+        print("after test loss")
+        dist.barrier()
+        print("outside")
         if rank == 0:
+            #print("inside rank 0")
+            #test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
+            print("after test rank 0")
             logger.info(f"Epoch {epoch+1}, train_loss: {train_loss}, test_loss: {test_loss} ")
-            run.log({"epoch": epoch+1, "train_loss": train_loss, "test_loss": test_loss})
-            
+            run.log({"epoch": epoch+1, "train_loss": train_loss, "test_loss": test_loss, 
+                     "train_std": train_std, "test_std": test_std})
+        print("before 2nd if")   
         if rank == 0 and epoch % train_config.checkpt_freq == 0 and train_config.save:
             checkpoint_path = os.path.join(savepath, f"checkpoint_{epoch+1}.h5")
             torch.save(ddp_model.state_dict(), checkpoint_path)
@@ -121,9 +136,10 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
                     checkpoint_path = os.path.join(savepath, "best_model.h5")
                     torch.save(model.state_dict(), checkpoint_path)
                     run.save(checkpoint_path, base_path=train_config.savepath)
-        #dist.barrier()
-
-    #dist.destroy_process_group()
+        print("before 2nd barrier")            
+        dist.barrier()
+        print("after 2nd barrier")
+    clean() if ddp else None
     
     
     
@@ -137,8 +153,7 @@ def partition_batch(rank: int, world_size: int, loader):
         
         # Get the batch indices for the current GPU
         batch_indices = chunks[rank]
-        box_size = batch.boxsize.view( batch.boxsize.size(0) // 2, 2, 3)[batch_indices]
-        box_size = box_size[:,1] - box_size[:,0]
+        box_size = batch.boxsize.view( unique_batch_indices.max() +1, 3)[batch_indices]
         edge_indices = torch.isin(batch.batch[batch.edge_index[0]], batch_indices)
         sub_batch_index = torch.isin(batch.batch, batch_indices)
         new_batch.append(Data(conf = batch.conf[sub_batch_index],
@@ -157,3 +172,24 @@ def partition_batch(rank: int, world_size: int, loader):
                         batch_size=1,
                         shuffle=True)
     return new_loader
+
+
+
+def setup(batch_size, world_size, rank):
+    assert batch_size % world_size == 0, "Batch size must be divisible by the number of devices."
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12345'
+    dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
+    
+def clean():
+    dist.destroy_process_group()
+    
+
+def get_ddp_model(model, rank, device, ddp):
+    if ddp:
+        ddp_model = DistributedDataParallel(model, 
+                                            device_ids=[rank] if device == 'gpu' else None, 
+                                            find_unused_parameters=True)
+    else:
+        ddp_model = model
+    return ddp_model
