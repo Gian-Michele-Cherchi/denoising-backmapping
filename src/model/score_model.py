@@ -29,7 +29,7 @@ class TensorProductConvLayer(nn.Module):
         self.sh_irreps = sh_irreps
         self.residual = residual
         
-        self.tp = o3.FullyConnectedTensorProduct(in_irreps, sh_irreps, out_irreps, shared_weights=False)
+        self.tp = o3.FullyConnectedTensorProduct(in_irreps, sh_irreps, out_irreps, shared_weights=False,)
         self.tp = self.tp
         
         # n_edge_features is the number of features per edge in the subgraph (in the classic example would be the embedding of the radial basis representation of the distance)
@@ -109,7 +109,7 @@ class TensorProductScoreModel(nn.Module):
         if second_order_repr:
             irrep_seq = [
                 f'{ns}x0e',
-                f'{ns}x0e+ {nv}x1o +  {nv}x2e', 
+                f'{ns}x0e+  {nv}x1o +  {nv}x2e', 
                 f'{ns}x0e + {nv}x1o + {nv}x2e + {nv}x1e + {nv}x2o',
                 f'{ns}x0e + {nv}x1o + {nv}x2e + {nv}x1e + {nv}x2o + {ns}x0o'
             ]
@@ -190,8 +190,6 @@ class TensorProductScoreModel(nn.Module):
         
         #embeddings
         node_attr, edge_attr = self.features_embedding(node_features=data.x, edge_features=edge_attr, edge_index=edge_index)
-    
-    
         node_sigma = data.node_sigma
         node_sigma_emb = get_timestep_embedding(node_sigma, self.sigma_embed_dim) #embeds the node sigma in a higher dimensional space
         
@@ -264,7 +262,7 @@ def create_model(
     second_order_repr,
     batch_norm, 
     residual,
-    model_path=None,
+    model_path: str="",
     ):
 
     model= TensorProductScoreModel(in_node_features=in_node_features, in_edge_features=in_edge_features, sigma_embed_dim=sigma_embed_dim, 
