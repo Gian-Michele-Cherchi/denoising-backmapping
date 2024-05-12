@@ -1,8 +1,7 @@
 '''This module handles task-dependent operations (A) and noises (n) to simulate a measurement y=Ax+n.'''
 
 from abc import ABC, abstractmethod
-from functools import partial
-from torch.nn import functional as F
+from collections import Counter
 import torch
 
 # =================
@@ -61,32 +60,60 @@ class NonLinearOperator(ABC):
 # =============
 @register_operator(name="coarse_grain")
 class CoarseGrainOperator(LinearOperator):
-    def __init__(self, n_atoms, n_monomers, n_polymers, device):
+    def __init__(self, device, operator, n_atoms, n_monomers, n_polymers):
         self.device = device
+        self.com_matrix, self.atom_monomer_id = operator
         self.n_atoms = n_atoms
         self.n_monomers = n_monomers
         self.n_polymers = n_polymers
-        self.com_matrix = torch.zeros(n_monomers, n_atoms, device=device)
-
-    def forward(self, data, **kwargs):
-        tot_mass = data.mon_masses.sum() # total monomer mass 
-        atom_monomer_id = data.atom_monomer_id # [n_atoms x 1], values from 0 to n_monomers -1 
-        n_atoms_monomer = self.n_monomers*( atom_monomer_id[:50] == 0 ).sum().item() # number of atoms per polymer
+        self.n_atom_in_mol = n_atoms // n_polymers
         
-        for i in range(self.n_monomers*self.n_polymers):
-            mon_id = i % (self.n_monomers-1) if  i != self.n_monomers else self.n_monomers-1
+    def forward(self, cg_distances, noisy_measurement=None, **kwargs):
+        if len(cg_distances.shape) == 3:
+            batch_size = cg_distances.shape[0]
+            cg_distances = cg_distances.view(batch_size, self.n_atoms, -1)
+            noisy_measurement =  noisy_measurement.view(batch_size, int(self.n_polymers*self.n_monomers), -1)
+        elif len(cg_distances.shape) == 2:
+            cg_distances = cg_distances.unsqueeze(0)
+            noisy_measurement = noisy_measurement.unsqueeze(0)
+            if len(self.com_matrix.shape) == 2:
+                self.com_matrix = self.com_matrix.unsqueeze(0)
+            batch_size = 1
+        else:
+            raise ValueError("cg_distances should have 2 or 3 dimensions.")
+        
+        lifted_measurement = cg_distances.clone()
+        for i in range(int(self.n_monomers*self.n_polymers)):
+            mon_id = i % self.n_monomers
             pol_id = i // self.n_monomers
-            self.com_matrix[i, int(pol_id * n_atoms_monomer * self.n_monomers) : int(pol_id * n_atoms_monomer * self.n_monomers) + 1] = torch.tensor(
-                atom_monomer_id == mon_id, dtype=torch.float64, device=self.device)
-            
-        batch_size = data.batch.unique().shape[0]
-        batch_com_matrix = torch.block_diag(*[self.com_matrix for _ in range(batch_size)])
-        com_confs = (1. / tot_mass ) * (batch_com_matrix @ data.atom_positions)
+            index = self.atom_monomer_id == mon_id+1
+            select_index = torch.arange(self.n_polymers) != pol_id
+            index = index.reshape(self.n_polymers, self.n_atom_in_mol)
+            index[select_index] = False
+            index = index.reshape(int(self.n_polymers* self.n_atom_in_mol))
+            lifted_measurement[:,index] = noisy_measurement[:,i:i+1].repeat(1,index.sum().item(),1) 
+        lifted_measurement = lifted_measurement.view(batch_size, self.n_atoms, -1)
         
-        return com_confs
-            
-    def get_cg_kernel(self):
+        perb_pos = lifted_measurement +  self.cg_std_dist[...,None,None] * cg_distances
+        reconstructed_cg_pos = self.com_matrix.to(self.device).bmm(perb_pos)
+        if batch_size == 1:
+            return reconstructed_cg_pos.squeeze(0)
+        else:
+            return reconstructed_cg_pos
+    
+        #batch_size = data.batch.unique().shape[0]
+        #batch_com_matrix = torch.block_diag(*[self.com_matrix for _ in range(batch_size)])
+        
+        #com_confs =  self.com_matrix @ data.conf
+        
+    def inject_std(self, sigma):
+        self.cg_std_dist = sigma
+    
+    def get_cg_matrix(self):
         return self.com_matrix 
+    
+    def transpose(self, data, **kwargs):
+        return self.com_matrix.T @ data
     
     
 
