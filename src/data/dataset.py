@@ -44,9 +44,9 @@ class PolymerMeltDataset(Dataset):
         self.datapoints = list(self.datapoints.values())
         random.shuffle(self.datapoints)
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.010*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.7*self.n_conf)]
         elif mode == 'val':
-            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.701*self.n_conf)]
+            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.9*self.n_conf)]
         elif mode == 'test':
             self.datapoints = self.datapoints[int(0.9*self.n_conf):]
             
@@ -206,7 +206,30 @@ class PolymerMeltDataset(Dataset):
     
     
     def get_com_matrix(self):
-        return self.com_matrix
+    
+        self.n_atoms = self.datapoints[0].conf.size(0)
+        self.n_monomers = self.datapoints[0].mol.max().item() 
+        self.n_polymers = 50
+        self.n_atoms_polymer =self.n_atoms // self.n_polymers
+        self.com_matrix = torch.zeros(self.n_monomers*self.n_polymers, self.n_atoms, dtype=torch.float64, device=self.device)
+        self.atom_monomer_id = self.datapoints[0].mol # [n_atoms x 1], values from 0 to n_monomers -1 
+        #n_atoms_monomer = self.n_monomers*( atom_monomer_id[:50] == 0 ).sum().item() # number of atoms per polymer
+        
+        for i in range(self.n_monomers*self.n_polymers):
+            mon_id = i % self.n_monomers #if  i != self.n_monomers else self.n_monomers-1
+            pol_id = i // self.n_monomers
+            monomers_atom_index = torch.where(self.atom_monomer_id - 1 == mon_id)[0]
+            atom_select_index = (monomers_atom_index>=pol_id*self.n_atoms_polymer) & (monomers_atom_index<(pol_id+1)*self.n_atoms_polymer)
+            
+            monomers_atom_index = monomers_atom_index[atom_select_index]
+            atom_numbers = self.datapoints[0].z[monomers_atom_index]
+            monomer_mass = atom_numbers.sum().item()
+            mass_weight = atom_numbers / monomer_mass
+            #total_monomer_mass = torch.tensor(list(Counter(dataset["atom_types"][index]).values())) @ torch.tensor([6,1])
+            self.com_matrix[i, monomers_atom_index] = mass_weight * torch.ones_like(
+                monomers_atom_index, dtype=torch.float64, device=self.device)
+            
+        return (self.com_matrix, self.atom_monomer_id)
     
     def get(self, idx: int):
         data = self.datapoints[idx]
@@ -216,7 +239,7 @@ class PolymerMeltDataset(Dataset):
         return len(self.datapoints)
             
     
-def get_dataloader(args, batch_size,rank, world_size, modes=('train', 'val')):
+def get_dataloader(args, batch_size, modes=('train', 'val')):
     """
     Get the dataloader for the dataset
     """
