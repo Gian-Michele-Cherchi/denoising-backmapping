@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-#from util.img_utils import clear_color
+
 from .posterior_mean_variance import get_mean_processor, get_var_processor
 from utils.misc import get_beta_scheduler
 
@@ -169,7 +169,8 @@ class GaussianDiffusion:
 
     def p_sample_loop(self,
                       model,
-                      x_start,
+                      data,
+                      dataset,
                       measurement,
                       measurement_cond_fn,
                       record,
@@ -177,34 +178,45 @@ class GaussianDiffusion:
         """
         The function used for sampling from noise.
         """ 
-        img = x_start
-        device = x_start.device
+       
+        conf = data.cg_perb_dist
+        device = data.cg_perb_dist.device
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
-            time = torch.tensor([idx] * img.shape[0], device=device)
+            time = torch.tensor([idx] * conf.shape[0], device=device)
+            time_measurement = torch.tensor([idx] * data.cg_pos.shape[0], device=device)
             
-            img = img.requires_grad_()
-            out = self.p_sample(x=img, t=time, model=model)
+            
+            # Reconstruct noisy configuration
+            data = dataset.reverse_coarse_grain(data, batch_size=1)
+            data.cg_perb_dist = data.cg_perb_dist.requires_grad_() # D_i
+            # Get the mean and variance of the diffusion posterior.
+            out = self.p_sample(x=data, t=time, model=model)
             
             # Give condition.
-            noisy_measurement = self.q_sample(measurement, t=time)
-
+            noisy_measurement,_ = self.q_sample(measurement, t=time_measurement)
+            #noisy_measurement = measurement
+            
             # TODO: how can we handle argument for different condition method?
-            img, distance = measurement_cond_fn(x_t=out['sample'],
-                                      measurement=measurement,
-                                      noisy_measurement=noisy_measurement,
-                                      x_prev=img,
-                                      x_0_hat=out['pred_xstart'])
-            img = img.detach_()
-           
+            data.cg_perb_dist, distance = measurement_cond_fn(x_t=out['sample'],
+                                                            measurement=measurement,
+                                                            noisy_measurement=noisy_measurement,
+                                                            x_prev=data.cg_perb_dist,
+                                                            x_0_hat=out['pred_xstart'],
+                                                            )
+            
+            data.cg_perb_dist = data.cg_perb_dist.detach()
+            
+            
             pbar.set_postfix({'distance': distance.item()}, refresh=False)
             if record:
-                if idx % 10 == 0:
-                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
-                    #plt.imsave(file_path, clear_color(img))
+                if idx % 1 == 0:
+                    checkpoint_data = {'sampled_conf': data.perb_pos, 'cg_distances': data.cg_perb_dist ,'idx': idx, 'norm': distance.item()}
+                    file_path = os.path.join(save_root, f"progress/conf_{str(idx).zfill(4)}.pt")
+                    torch.save(checkpoint_data, file_path)
 
-        return img       
+        return data       
         
     def p_sample(self, model, x, t):
         raise NotImplementedError
@@ -213,7 +225,7 @@ class GaussianDiffusion:
         model_output = model(x, self._scale_timesteps(t))
         
         # In the case of "learned" variance, model will give twice channels.
-        if model_output.shape[1] == 2 * x.shape[1]:
+        if model_output.shape[1] == 2 * x.cg_perb_dist.shape[1]:
             model_output, model_var_values = torch.split(model_output, x.shape[1], dim=1)
         else:
             # The name of variable is wrong. 
@@ -221,10 +233,10 @@ class GaussianDiffusion:
             # will not be used for calculating something important in variance.
             model_var_values = model_output
 
-        model_mean, pred_xstart = self.mean_processor.get_mean_and_xstart(x, t, model_output)
+        model_mean, pred_xstart = self.mean_processor.get_mean_and_xstart(x.cg_perb_dist, t, model_output)
         model_variance, model_log_variance = self.var_processor.get_variance(model_var_values, t)
 
-        assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape
+        assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.cg_perb_dist.shape
 
         return {'mean': model_mean,
                 'variance': model_variance,
@@ -357,7 +369,8 @@ class _WrappedModel:
         new_ts = map_tensor[ts]
         if self.rescale_timesteps:
             new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
-        return self.model(x, new_ts, **kwargs)
+        x.node_sigma = new_ts
+        return self.model(x, **kwargs)
 
 
 @register_sampler(name='ddpm')
@@ -366,8 +379,8 @@ class DDPM(SpacedDiffusion):
         out = self.p_mean_variance(model, x, t)
         sample = out['mean']
 
-        noise = torch.randn_like(x)
-        if t != 0:  # no noise when t == 0
+        noise = torch.randn_like(x.cg_perb_dist)
+        if t[0] != 0:  # no noise when t == 0
             sample += torch.exp(0.5 * out['log_variance']) * noise
 
         return {'sample': sample, 'pred_xstart': out['pred_xstart']}
