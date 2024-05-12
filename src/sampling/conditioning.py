@@ -29,7 +29,7 @@ class ConditioningMethod(ABC):
         if self.noiser.__name__ == 'gaussian':
             difference = measurement - self.operator.forward(x_0_hat, **kwargs)
             norm = torch.linalg.norm(difference)
-            norm_grad = torch.autograd.grad(outputs=norm, inputs=x_prev)[0]
+            norm_grad = torch.autograd.grad(outputs=norm, inputs=x_prev)[0]  / self.operator.cg_std_dist[0].item()
         
         elif self.noiser.__name__ == 'poisson':
             Ax = self.operator.forward(x_0_hat, **kwargs)
@@ -79,11 +79,12 @@ class ManifoldConstraintGradient(ConditioningMethod):
 class PosteriorSampling(ConditioningMethod):
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
-        self.scale = kwargs.get('scale', 1.0)
+        self.scale = kwargs.get('scale', 1)
 
     def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
         norm_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, **kwargs)
-        x_t -= norm_grad * self.scale
+        scale = self.scale / norm
+        x_t -= norm_grad * scale
         return x_t, norm
         
 @register_conditioning_method(name='ps+')
