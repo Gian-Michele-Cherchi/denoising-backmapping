@@ -39,9 +39,7 @@ conditioning:
 measurement:
   operator:
     name: coarse_grain
-    n_atoms: 10000
-    n_monomers: 50
-    n_polymers: 100
+    
   noise: 
     name: gaussian
     sigma: 0.05
@@ -54,4 +52,4 @@ train:
   batch_size: 2
   checkpt_freq: 1
   checkpt_epoch: 1
-  savepath: "/home/gmcherch/denoising-backmapping/save"
+  savepath: '/home/gmcherch/denoising-backmapping/save'
