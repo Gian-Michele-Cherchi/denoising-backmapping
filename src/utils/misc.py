@@ -50,4 +50,17 @@ def get_beta_scheduler(beta_start:float, beta_end:float, diffusion_timesteps: in
 
 
 
-
+def write_lammps_traj(filename, positions, atom_type='C'):
+    n_atoms = positions.shape[0]
+    with open(filename, 'w') as f:
+        for i in range(n_atoms):
+            f.write('ITEM: TIMESTEP\n')
+            f.write(f'{i}\n')
+            f.write('ITEM: NUMBER OF ATOMS\n')
+            f.write(f'{n_atoms}\n')
+            f.write('ITEM: BOX BOUNDS pp pp pp\n')
+            f.write('0.0 1.0\n'*3)
+            f.write('ITEM: ATOMS id type x y z\n')
+            for j in range(n_atoms):
+                x, y, z = positions[j]
+                f.write(f'{j+1} {atom_type} {x} {y} {z}\n')
