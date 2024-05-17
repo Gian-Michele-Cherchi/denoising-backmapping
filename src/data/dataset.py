@@ -29,9 +29,10 @@ def get_dataset(name: str, path: str,  **kwargs):
 
 @register_dataset('polymer_melt')
 class PolymerMeltDataset(Dataset):
-    def __init__(self,  path , mode, coarse_grain: bool=True ,  save_ckpt:bool=True, device: str='cpu'):
+    def __init__(self,  path , mode, coarse_grain: bool=True , hydrogens: bool=False,  save_ckpt:bool=True, device: str='cpu'):
         super(PolymerMeltDataset, self).__init__()
         self.device = device
+        self.hydrogens = hydrogens
         self.cg = coarse_grain
         self.path = path
         try: 
@@ -44,11 +45,13 @@ class PolymerMeltDataset(Dataset):
         self.datapoints = list(self.datapoints.values())
         random.shuffle(self.datapoints)
         if mode == 'train':
-            self.datapoints = self.datapoints[:int(0.7*self.n_conf)]
+            self.datapoints = self.datapoints[:int(0.2*self.n_conf)]
         elif mode == 'val':
-            self.datapoints = self.datapoints[int(0.7*self.n_conf):int(0.9*self.n_conf)]
+            self.com_matrix, self.atom_monomer_id = self.get_com_matrix(self.datapoints[0])
+            self.datapoints = self.datapoints[int(0.3*self.n_conf):int(0.35*self.n_conf)]
         elif mode == 'test':
-            self.datapoints = self.datapoints[int(0.9*self.n_conf):]
+            self.com_matrix, self.atom_monomer_id = self.get_com_matrix(self.datapoints[0])
+            self.datapoints = self.datapoints[int(0.5*self.n_conf):int(0.6*self.n_conf)]
             
     def preprocessing(self, path):
         """
@@ -60,17 +63,23 @@ class PolymerMeltDataset(Dataset):
         dataset = []
         residue = "C\C=C/C"
         for ds in listdir:
-            data = self.read_lammpstraj(osp.join(path, ds, 'dump.lammpstrj'))
-            dataset.append(data)
-            types.append(data['types'])
-            smiles.append(r"C\C=C/C" * self.n_monomers)
+            if ds == 'cPB_10C_10M':
+                data = self.read_lammpstraj(osp.join(path, ds, 'dump.lammpstrj'))
+                dataset.append(data)
+                types.append(data['types'])
+                smiles.append(r"C\C=C/C" * self.n_monomers)
         
         self.smiles = set(smiles)
         self.types = set(types[0])
-        dataset = self.coarse_grain(dataset[0])
-        confs = self.features_from_smiles(dataset)
+        confs = self.features_from_smiles(dataset[0])
+        
+        if self.cg:
+            for conf in confs.values():
+                self.com_matrix, _ = self.get_com_matrix(conf)
+                conf.cg_pos = self.com_matrix @ conf.conf
+                conf.cg_dist = self.get_cg_dist(conf)
+                conf.cg_std_dist = torch.sqrt(torch.trace(conf.cg_dist.T @ conf.cg_dist) / (3*conf.cg_dist.size(0)))
         return confs
-    
     
     def features_from_smiles(self, dataset):
         
@@ -89,25 +98,23 @@ class PolymerMeltDataset(Dataset):
             dataset["pos"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["pos"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol][:,self.reindex]
             dataset["mol"][i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["mol"][i*self.atom_in_mol:(i+1)*self.atom_in_mol][self.reindex]
             dataset["atom_types"][i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["atom_types"][i*self.atom_in_mol:(i+1)*self.atom_in_mol][self.reindex]
-            dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol][:,self.reindex]
+            #dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol] = dataset["cg_dist"][:,i*self.atom_in_mol:(i+1)*self.atom_in_mol][:,self.reindex]
             #self.com_matrix[i*self.n_monomers:(i+1)*self.n_monomers] = self.com_matrix[i*self.n_monomers:(i+1)*self.n_monomers][:,self.reindex]
             ext_edge_index[:,i*n_edges:(i+1)*n_edges] = const + ext_edge_index[:,i*n_edges:(i+1)*n_edges]
             carbon_index += [i for i in range(i*self.atom_in_mol, (i+1)*self.atom_in_mol - 62 ) ]
             edge_carbon_index += [i for i in range(i*n_edges, (i+1)*n_edges- 124) ] 
             #const += self.atom_in_mol
-            const += 40
+            const += 40 # just taking carbons
+        self.atom_in_mol = 40
         graph_inst = {}
         for index,conf in enumerate(dataset["pos"]):
-            graph_conf = Data(x=self.mol_features[0].x[:40].repeat(self.n_molecules, 1),
+            graph_conf = Data(x=self.mol_features[0].x[:self.atom_in_mol].repeat(self.n_molecules, 1),
                               edge_index=ext_edge_index[:,edge_carbon_index], 
                               edge_attr=self.mol_features[0].edge_attr[:78].repeat(self.n_molecules, 1), 
-                              z=self.mol_features[0].z[:40].repeat(self.n_molecules))
+                              z=self.mol_features[0].z[:self.atom_in_mol].repeat(self.n_molecules))
             graph_conf.conf = conf[carbon_index]
             graph_conf.boxsize = dataset["boxsize"][index,1] -dataset["boxsize"][index,0]
             graph_conf.mol = dataset["mol"][carbon_index]
-            graph_conf.cg_dist = dataset["cg_dist"][index, carbon_index]
-            graph_conf.cg_pos = dataset["cg_pos"][index]
-            graph_conf.cg_std_dist = torch.sqrt(torch.trace(graph_conf.cg_dist.T @ graph_conf.cg_dist) / (3*graph_conf.cg_dist.size(0)))
             graph_inst["conf"+str(index)] = graph_conf
             
         return graph_inst
@@ -135,7 +142,7 @@ class PolymerMeltDataset(Dataset):
         pos = torch.tensor(df[['xu', 'yu', 'zu']].values, dtype=torch.double)[None,...].view(n_conf,self.n_atoms, 3)
         mol = torch.tensor(df["mol"].values)[None,...].view(n_conf,self.n_atoms)[0]
         atom_type = df['element'].values[:skip_index[9]-9]
-        self.atom_in_mol = 102
+        self.atom_in_mol = len(atom_type) // self.n_monomers
         self.n_molecules = pos.size(1) // self.atom_in_mol
         assert len(atom_type) == mol.size(0)
         del df
@@ -147,24 +154,10 @@ class PolymerMeltDataset(Dataset):
             "boxsize":boxsize,
             }
         
-    def coarse_grain(self, dataset):
-        atom_monomer_id = dataset["mol"]# [n_atoms x 1], values from 1 to n_monomers 
-        self.com_matrix = torch.zeros(self.n_molecules * self.n_monomers, self.n_atoms, device=self.device, dtype=torch.double)
-        partial_relative_mass = torch.tensor([ATOMIC_NUMBERS[dataset["atom_types"][i]] for i in range(len(dataset["atom_types"]))])
-        for i in range(self.n_monomers*self.n_molecules):
-            mon_id = i % self.n_monomers
-            pol_id = i // self.n_monomers
-            index = atom_monomer_id == mon_id+1
-            select_index = torch.arange(self.n_molecules) != pol_id
-            index = index.reshape(self.n_molecules, self.atom_in_mol)
-            index[select_index] = False
-            index = index.reshape(self.n_molecules* self.atom_in_mol)
-            total_monomer_mass = torch.tensor(list(Counter(dataset["atom_types"][index]).values())) @ torch.tensor([6,1])
-            self.com_matrix[i,:] = (partial_relative_mass / total_monomer_mass) * index 
-
-        com_confs = torch.bmm(self.com_matrix[None,...].expand(dataset["pos"].size(0),-1,-1), dataset["pos"])
-        dataset["cg_pos"] = com_confs
-        dist = torch.zeros(dataset["pos"].size(0), self.n_molecules*self.atom_in_mol,3, dtype=torch.float64, device=self.device)
+    def get_cg_dist(self, data):
+        
+        atom_monomer_id = data.mol # [n_atoms x 1], values from 1 to n_monomers 
+        dist = torch.zeros(self.n_molecules*self.atom_in_mol,3, dtype=torch.float64, device=self.device)
         ################################
         for i in range(self.n_monomers*self.n_molecules):
             mon_id = i % self.n_monomers
@@ -174,10 +167,9 @@ class PolymerMeltDataset(Dataset):
             index = index.reshape(self.n_molecules, self.atom_in_mol)
             index[select_index] = False
             index = index.reshape(self.n_molecules* self.atom_in_mol)
-            dist[:,index] = dataset["pos"][:,index] -dataset["cg_pos"][:,i:i+1].repeat(1,index.sum().item(),1)
-        #dataset["cg_std_dist"] = dist.norm(dim=2).std()
-        dataset["cg_dist"] = dist
-        return dataset
+            dist[index] = data.conf[index] - data.cg_pos[i:i+1].repeat(index.sum().item(),1)
+       
+        return dist
     
     def reverse_coarse_grain(self,batch, batch_size: int):
         """
@@ -205,16 +197,15 @@ class PolymerMeltDataset(Dataset):
         return batch
     
     
-    def get_com_matrix(self):
+    def get_com_matrix(self,data):
     
-        self.n_atoms = self.datapoints[0].conf.size(0)
-        self.n_monomers = self.datapoints[0].mol.max().item() 
-        self.n_polymers = 50
+        self.n_atoms = data.conf.size(0)
+        self.n_monomers = data.mol.max().item() 
+        self.n_polymers = 10
         self.n_atoms_polymer =self.n_atoms // self.n_polymers
         self.com_matrix = torch.zeros(self.n_monomers*self.n_polymers, self.n_atoms, dtype=torch.float64, device=self.device)
-        self.atom_monomer_id = self.datapoints[0].mol # [n_atoms x 1], values from 0 to n_monomers -1 
-        #n_atoms_monomer = self.n_monomers*( atom_monomer_id[:50] == 0 ).sum().item() # number of atoms per polymer
-        
+        self.atom_monomer_id = data.mol # [n_atoms x 1], values from 0 to n_monomers -1 
+       
         for i in range(self.n_monomers*self.n_polymers):
             mon_id = i % self.n_monomers #if  i != self.n_monomers else self.n_monomers-1
             pol_id = i // self.n_monomers
@@ -222,7 +213,7 @@ class PolymerMeltDataset(Dataset):
             atom_select_index = (monomers_atom_index>=pol_id*self.n_atoms_polymer) & (monomers_atom_index<(pol_id+1)*self.n_atoms_polymer)
             
             monomers_atom_index = monomers_atom_index[atom_select_index]
-            atom_numbers = self.datapoints[0].z[monomers_atom_index]
+            atom_numbers = data.z[monomers_atom_index]
             monomer_mass = atom_numbers.sum().item()
             mass_weight = atom_numbers / monomer_mass
             #total_monomer_mass = torch.tensor(list(Counter(dataset["atom_types"][index]).values())) @ torch.tensor([6,1])
