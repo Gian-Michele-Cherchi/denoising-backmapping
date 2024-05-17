@@ -40,7 +40,8 @@ def eval(cfg: DictConfig):
     # Load model
     savepath = os.path.join(cfg.eval['save_dir'], run_name)
     model_path = os.path.join(savepath, 'best_model.h5')
-    model = create_model(**model_config, model_path=model_path)
+    model_config['model_path'] = model_path
+    model = create_model(**model_config)
     model = model.to(device)
     model.eval()
 
@@ -51,10 +52,10 @@ def eval(cfg: DictConfig):
                                 )
     
      # Prepare Operator and noise
-    measure_config['operator']['n_atoms'] = 2000
+    measure_config['operator']['n_atoms'] = 400
     measure_config['operator']['n_monomers'] = 10
-    measure_config['operator']['n_polymers'] = 50
-    operator = get_operator(device=device, operator=dataset.get_com_matrix(), **measure_config['operator'])
+    measure_config['operator']['n_polymers'] = 10
+    operator = get_operator(device=device, operator=(dataset.com_matrix, dataset.atom_monomer_id), **measure_config['operator'])
     noiser = get_noise(**measure_config['noise'])
     logger.info(f"Operation: {measure_config['operator']['name']} / Noise: {measure_config['noise']['name']}")
 
@@ -70,7 +71,7 @@ def eval(cfg: DictConfig):
     sample_fn = partial(sampler.p_sample_loop, model=model, measurement_cond_fn=measurement_cond_fn)
    
     # Working directory
-    out_path = os.path.join(savepath, measure_config['operator']['name']+"_"+cond_method_name+"_scale_noisy_1")
+    out_path = os.path.join(savepath, measure_config['operator']['name']+"_"+cond_method_name+"_scale_1_opt")
     os.makedirs(out_path, exist_ok=True)
     for img_dir in ['input', 'recon', 'progress', 'label']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
@@ -114,7 +115,7 @@ def eval(cfg: DictConfig):
             input_cg_pos = conf.cg_pos
             x_start = torch.randn(conf.conf.shape, dtype=torch.float64 ,device=device)
             #sigma = conf.cg_std_dist.expand(x_start.shape[0])
-            conf.cg_perb_dist = x_start
+            conf.cg_perb_dist = x_start.requires_grad_(True)
             
             sample = sample_fn(data=conf.to(device), dataset=dataset ,measurement=conf.cg_pos, record=True, save_root=out_path)
 
