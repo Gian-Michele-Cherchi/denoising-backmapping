@@ -29,7 +29,7 @@ class TensorProductConvLayer(nn.Module):
         self.sh_irreps = sh_irreps
         self.residual = residual
         
-        self.tp = o3.FullyConnectedTensorProduct(in_irreps, sh_irreps, out_irreps, shared_weights=False,)
+        self.tp = o3.FullyConnectedTensorProduct(in_irreps, sh_irreps, out_irreps, shared_weights=False)
         self.tp = self.tp
         
         # n_edge_features is the number of features per edge in the subgraph (in the classic example would be the embedding of the radial basis representation of the distance)
@@ -39,7 +39,7 @@ class TensorProductConvLayer(nn.Module):
             nn.ReLU(),
             nn.Linear(n_edge_features, self.tp.weight_numel)
         )
-        self.fc = self.fc
+        
         self.batch_norm = BatchNorm(out_irreps) if batch_norm else None
         
     def forward(self, node_attr, edge_index, edge_attr, edge_sh, out_nodes=None, reduce="mean"):
@@ -174,7 +174,7 @@ class TensorProductScoreModel(nn.Module):
         #src, dst = data.edge_index # source and destination nodes of the connected components graph
         #edge_vec = data.conf[dst.long()] - data.conf[src.long()]
         
-        radius_edges = pbc_radius_graph(data.perb_pos.clone(), r=self.max_radius, d=data.boxsize, batch=data.batch)
+        radius_edges = pbc_radius_graph(data.perb_pos.clone().detach(), r=self.max_radius, d=data.boxsize, batch=data.batch)
         # Convert to sets of tuples: check for unique edges to add non-bonded features
         edges_cc     = set(map(tuple, data.edge_index.permute(1,0).cpu().numpy()))
         edges_radius = set(map(tuple, radius_edges.permute(1,0).cpu().numpy()))
@@ -203,7 +203,7 @@ class TensorProductScoreModel(nn.Module):
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
         edge_vec = data.perb_pos[dst.long()] - data.perb_pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
       
-        boxsize_dst = d[dst.long() // 2000]
+        boxsize_dst = d[dst.long() // data.perb_pos.size(0)]
         edge_vec -= torch.round(edge_vec / boxsize_dst[...,None]) * boxsize_dst[...,None] # periodic boundary conditions
         edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
         
@@ -262,14 +262,14 @@ def create_model(
     second_order_repr,
     batch_norm, 
     residual,
-    model_path: str="",
+    model_path: str='None',
     ):
 
     model= TensorProductScoreModel(in_node_features=in_node_features, in_edge_features=in_edge_features, sigma_embed_dim=sigma_embed_dim, 
                                     sh_lmax=sh_lmax, ns=ns, nv=nv, num_conv_layers=num_conv_layers, max_radius=max_radius, 
                                     radius_embed_dim=radius_embed_dim,
                                     second_order_repr=second_order_repr, batch_norm=batch_norm, residual=residual, scale_by_sigma=scale_by_sigma)
-    if model_path is not None:
+    if model_path != 'None':
         model.load_state_dict(torch.load(model_path, map_location='cpu'))
     
     return model
