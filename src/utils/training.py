@@ -24,6 +24,7 @@ def train_epoch(loss_fn, model, loader, optimizer, rank: int):
         loss.backward()
         optimizer.step()
         loss_tot.append(loss.detach().item())
+        print('loss', loss)
     loss_avg = np.mean(loss_tot)
     loss_std = np.std(loss_tot)
     return loss_avg, loss_std
@@ -35,12 +36,10 @@ def test_epoch(loss_fn, model, loader, rank: int):
     model.eval()
     for data in tqdm(loader, total=len(loader)):
         with torch.no_grad():
-            print("before loss_fn")
             loss = loss_fn(model=model,
                         batch=data.to(rank))
-        print("before append loss")
         loss_tot.append(loss.item())
-    print("before loss_avg")
+   
     loss_avg = np.mean(loss_tot)
     loss_std = np.std(loss_tot)
     return loss_avg, loss_std
@@ -76,8 +75,9 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
     # Dataset 
     loader, dataset = get_dataloader(data_config, 
                                      batch_size=train_config.batch_size,
-                                     rank=rank, 
-                                     world_size=world_size)
+                                     #rank=rank, 
+                                     #world_size=world_size)
+    )
     
     # Load diffusion sampler
     sampler = create_sampler(**diffusion_config) 
@@ -115,7 +115,7 @@ def run_process(rank: int,ddp:int, world_size: int, device, train_config, diffus
         #dist.barrier()
         test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
        
-        dist.barrier()
+        #dist.barrier()
        
         if rank == 0:
             #test_loss, test_std = test_epoch(loss_fn, ddp_model, loader["val"], rank)
