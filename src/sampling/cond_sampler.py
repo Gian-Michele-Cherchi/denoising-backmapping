@@ -187,16 +187,16 @@ class GaussianDiffusion:
             time = torch.tensor([idx] * conf.shape[0], device=device)
             time_measurement = torch.tensor([idx] * data.cg_pos.shape[0], device=device)
             
-            
+            data.cg_perb_dist = data.cg_perb_dist.requires_grad_() # D_i
             # Reconstruct noisy configuration
             data = dataset.reverse_coarse_grain(data, batch_size=1)
-            data.cg_perb_dist = data.cg_perb_dist.requires_grad_() # D_i
+            
             # Get the mean and variance of the diffusion posterior.
             out = self.p_sample(x=data, t=time, model=model)
             
             # Give condition.
-            noisy_measurement,_ = self.q_sample(measurement, t=time_measurement)
-            #noisy_measurement = measurement
+            #noisy_measurement,_ = self.q_sample(measurement, t=time_measurement)
+            noisy_measurement = measurement
             
             # TODO: how can we handle argument for different condition method?
             data.cg_perb_dist, distance = measurement_cond_fn(x_t=out['sample'],
