@@ -1,5 +1,7 @@
 # Scalable Diffusion Backmapping for Polymer Melts
 
+![Diffusion Backmapping Scheme](docs/conditional_gen_diff_.png)
+
 ## Overview
 
 This repository contains the implementation of **Scalable Diffusion Backmapping**, a method for reconstructing atomistic polymer configurations from coarse-grained (CG) models. The approach utilizes **Equivariant Graph Neural Networks (EGNNs)** and **Denoising Diffusion Probabilistic Models (DDPMs)** to efficiently and accurately restore fine-grained details of polymer melts from CG representations.
@@ -52,4 +54,3 @@ poetry run python src/sample.py
  -	Improved handling of larger polymer melts with advanced architectures.
  -	Hybrid physics-informed and ML-based approaches for enhanced accuracy.
 
- 
