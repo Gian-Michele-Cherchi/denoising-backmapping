@@ -11,4 +11,3 @@
 nohup.out
 *slurm-*.out
 *launch_jobs.sh]
-*docs
