@@ -21,4 +21,35 @@ To set up the required dependencies, install the necessary Python packages using
 ```bash
 poetry install
 ```
+## Usage
 
+### 1. Data Preparation
+
+The input consists of coarse-grained molecular structures. Prepare datasets in the following format: 
+-  representations: Center of Mass (COM) coordinates of monomers.
+- Reference atomistic structures: Used for training and evaluation.
+
+### 2. Training the Backmapping Model
+
+To train the Diffusion Backmapping model, run:
+```bash
+poetry run python src/train.py train=diffusion
+```
+### 3. Generating Atomistic Configurations
+
+Once the model is trained, generate atomistic polymer structures using:
+```bash
+poetry run python src/sample.py
+```
+
+## Results
+  - Higher fidelity backmapping compared to naïve sampling.
+  - Improved RDFs in comparison to standard CG models.
+  - Scalable framework suitable for various polymer systems.
+
+## Future Work
+ -	Refinement of angle distributions using additional loss terms.
+ -	Improved handling of larger polymer melts with advanced architectures.
+ -	Hybrid physics-informed and ML-based approaches for enhanced accuracy.
+
+ 
