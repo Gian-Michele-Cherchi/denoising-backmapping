@@ -24,7 +24,7 @@ def train_epoch(loss_fn, model, loader, optimizer, rank: int):
         loss.backward()
         optimizer.step()
         loss_tot.append(loss.detach().item())
-        print('loss', loss)
+        #print('loss', loss)
     loss_avg = np.mean(loss_tot)
     loss_std = np.std(loss_tot)
     return loss_avg, loss_std
@@ -51,15 +51,19 @@ def get_ddpm_loss_fn(sampler, dataset, model, batch, reduce_mean=True):
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
   batch_size = batch.batch.max().item() + 1 
   t = torch.randint(0, sampler.num_timesteps, (batch_size,), device=batch.conf.device)
-  t= t.repeat_interleave(batch.conf.shape[0] // batch_size)
-  assert t.shape[0] == batch.conf.shape[0]
+  t= t.repeat_interleave(batch.full_conf.shape[0] // batch_size)
+  assert t.shape[0] == batch.full_conf.shape[0]
   batch.node_sigma = t
-  sigma = batch.cg_std_dist.repeat_interleave(batch.conf.shape[0] // batch_size)
+  sigma = batch.cg_std_dist.repeat_interleave(batch.full_conf.shape[0] // batch_size)
   perb_dist, noise = sampler.q_sample(batch.cg_dist / sigma[...,None], t)
+  # / sigma[...,None]
   batch.cg_perb_dist = perb_dist
   batch = dataset.reverse_coarse_grain(batch, batch_size=batch_size)
   score = model(batch)
-  losses = torch.square(score - noise)
+  #subtract monomer mean from noise to make it zero mean
+  noise[batch.mask.bool()] -= noise[batch.mask.bool()].view(batch_size, 4, 10, 10, -1).mean(dim=1, 
+                                                                                            keepdim=True).expand(-1,4,-1,-1,-1).reshape(batch_size*4*10*10,-1)
+  losses = torch.square(score[batch.mask.bool()] - noise[batch.mask.bool()])
   losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
   loss = torch.mean(losses)
   return loss

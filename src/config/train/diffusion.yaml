@@ -10,13 +10,13 @@ diffusion:
   timestep_respacing: 10000
 
 model:
-  in_node_features: 4
-  in_edge_features: 6
+  in_node_features: 11
+  in_edge_features: 5
   sigma_embed_dim: 32
   sh_lmax: 2
   ns: 32
   nv: 32
-  num_conv_layers: 5 
+  num_conv_layers: 8
   max_radius: 6
   radius_embed_dim: 25
   scale_by_sigma: True
@@ -26,7 +26,7 @@ model:
   model_path: None
 
 data:
-  path: dataset
+  path: dataset/cPB_10C_10M
   device: 'cpu'
   save_ckpt: True
   coarse_grain: True
@@ -35,7 +35,7 @@ data:
 conditioning:
   method: ps
   params:
-    scale: 0.3
+    scale: 0.1
 
 measurement:
   operator:
@@ -47,10 +47,10 @@ measurement:
 
 train:
   gpu_id: 0
-  save: False
+  save: True
   lr: 1e-4
   epochs: 1000
-  batch_size: 8
+  batch_size: 4
   checkpt_freq: 1
   checkpt_epoch: 1
   savepath: '/home/gmcherch/denoising-backmapping/save'

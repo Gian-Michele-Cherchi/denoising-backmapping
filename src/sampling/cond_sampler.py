@@ -126,7 +126,7 @@ class GaussianDiffusion:
 
         return mean, variance, log_variance
 
-    def q_sample(self, x_start, t):
+    def q_sample(self, x_start, t, sigma=None):
         """
         Diffuse the data for a given number of diffusion steps.
 
@@ -138,6 +138,8 @@ class GaussianDiffusion:
         :return: A noisy version of x_start.
         """
         noise = torch.randn_like(x_start).to(x_start)
+        if sigma is not None:
+            noise = sigma[..., None] * noise
         assert noise.shape == x_start.shape
         
         coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_start)
@@ -185,11 +187,11 @@ class GaussianDiffusion:
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
             time = torch.tensor([idx] * conf.shape[0], device=device)
-            time_measurement = torch.tensor([idx] * data.cg_pos.shape[0], device=device)
+            #time_measurement = torch.tensor([idx] * data.cg_pos.shape[0], device=device)
             
-            data.cg_perb_dist = data.cg_perb_dist.requires_grad_() # D_i
+            data.cg_perb_dist = data.cg_perb_dist.requires_grad_(True) # D_i
             # Reconstruct noisy configuration
-            data = dataset.reverse_coarse_grain(data, batch_size=1)
+            data = dataset.reverse_coarse_grain(data, batch_size=1) # C_t = Y + sigma * D_i | C_cg = Y 
             
             # Get the mean and variance of the diffusion posterior.
             out = self.p_sample(x=data, t=time, model=model)
@@ -204,10 +206,11 @@ class GaussianDiffusion:
                                                             noisy_measurement=noisy_measurement,
                                                             x_prev=data.cg_perb_dist,
                                                             x_0_hat=out['pred_xstart'],
+                                                            mask=data.mask,
                                                             )
             
             data.cg_perb_dist = data.cg_perb_dist.detach()
-            
+            #data.cg_perb_dist[~data.mask.bool()] = 0.0
             
             pbar.set_postfix({'distance': distance.item()}, refresh=False)
             if record:
@@ -236,7 +239,7 @@ class GaussianDiffusion:
         model_mean, pred_xstart = self.mean_processor.get_mean_and_xstart(x.cg_perb_dist, t, model_output)
         model_variance, model_log_variance = self.var_processor.get_variance(model_var_values, t)
 
-        assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.cg_perb_dist.shape
+        #assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.cg_perb_dist.shape
 
         return {'mean': model_mean,
                 'variance': model_variance,
@@ -378,7 +381,7 @@ class DDPM(SpacedDiffusion):
     def p_sample(self, model, x, t):
         out = self.p_mean_variance(model, x, t)
         sample = out['mean']
-
+        #sigma = x.cg_std_dist[...,None]
         noise = torch.randn_like(x.cg_perb_dist)
         if t[0] != 0:  # no noise when t == 0
             sample += torch.exp(0.5 * out['log_variance']) * noise
@@ -391,24 +394,24 @@ class DDIM(SpacedDiffusion):
     def p_sample(self, model, x, t, eta=0.0):
         out = self.p_mean_variance(model, x, t)
         
-        eps = self.predict_eps_from_x_start(x, t, out['pred_xstart'])
+        eps = self.predict_eps_from_x_start(x.cg_perb_dist, t, out['pred_xstart'])
         
-        alpha_bar = extract_and_expand(self.alphas_cumprod, t, x)
-        alpha_bar_prev = extract_and_expand(self.alphas_cumprod_prev, t, x)
+        alpha_bar = extract_and_expand(self.alphas_cumprod, t, x.cg_perb_dist)
+        alpha_bar_prev = extract_and_expand(self.alphas_cumprod_prev, t, x.cg_perb_dist)
         sigma = (
             eta
             * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar))
             * torch.sqrt(1 - alpha_bar / alpha_bar_prev)
         )
         # Equation 12.
-        noise = torch.randn_like(x)
+        noise = torch.randn_like(x.cg_perb_dist)
         mean_pred = (
             out["pred_xstart"] * torch.sqrt(alpha_bar_prev)
             + torch.sqrt(1 - alpha_bar_prev - sigma ** 2) * eps
         )
 
         sample = mean_pred
-        if t != 0:
+        if t[0] != 0:
             sample += sigma * noise
         
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}

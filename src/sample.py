@@ -46,41 +46,39 @@ def eval(cfg: DictConfig):
     model.eval()
 
     # Prepare dataloader
+    data_config['path'] =  'dataset/cPB_50C_10M'
     loader, dataset = get_dataloader(data_config, 
                                 batch_size=1,
                                 modes=('val','test'),
                                 )
     
      # Prepare Operator and noise
-    measure_config['operator']['n_atoms'] = 400
+    measure_config['operator']['n_atoms'] = 2000
     measure_config['operator']['n_monomers'] = 10
-    measure_config['operator']['n_polymers'] = 10
+    measure_config['operator']['n_polymers'] = 50
     operator = get_operator(device=device, operator=(dataset.com_matrix, dataset.atom_monomer_id), **measure_config['operator'])
     noiser = get_noise(**measure_config['noise'])
     logger.info(f"Operation: {measure_config['operator']['name']} / Noise: {measure_config['noise']['name']}")
 
     # Prepare conditioning method
     cond_method_name = 'ps'
+    task_config['params']['scale'] = 0.0
     cond_method = get_conditioning_method(cond_method_name, operator, noiser, **task_config)
     measurement_cond_fn = cond_method.conditioning
     logger.info(f"Conditioning method : {task_config['method']}")
    
     # Load diffusion sampler
     diffusion_config['timestep_respacing'] = 1000
+    #diffusion_config['model_var_type'] = 'fixed_large'
     sampler = create_sampler(**diffusion_config) 
     sample_fn = partial(sampler.p_sample_loop, model=model, measurement_cond_fn=measurement_cond_fn)
    
     # Working directory
-    out_path = os.path.join(savepath, measure_config['operator']['name']+"_"+cond_method_name+"_scale_1_opt")
+    out_path = os.path.join(savepath, measure_config['operator']['name']+"_"+cond_method_name+"_scale_0_c50_m10_")
     os.makedirs(out_path, exist_ok=True)
     for img_dir in ['input', 'recon', 'progress', 'label']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
-    # Exception) In case of inpainting, we need to generate a mask 
-    #if measure_config['operator']['name'] == 'inpainting':
-    #    mask_gen = mask_generator(
-    #       **measure_config['mask_opt']
-    #    )
     k = 0
     # Do Inference
     for i, conf in enumerate(loader['test']):
@@ -113,16 +111,19 @@ def eval(cfg: DictConfig):
             # Sampling noised initial distances
             input_conf = conf.conf
             input_cg_pos = conf.cg_pos
-            x_start = torch.randn(conf.conf.shape, dtype=torch.float64 ,device=device)
-            #sigma = conf.cg_std_dist.expand(x_start.shape[0])
+            sigma = conf.cg_std_dist
+            x_start =  torch.cat([torch.randn(conf.conf.shape, dtype=torch.float64 ,device=device), 
+                            torch.zeros_like(input_cg_pos, dtype=torch.float64, device=device)], dim=0)
+        
             conf.cg_perb_dist = x_start.requires_grad_(True)
-            
+           
             sample = sample_fn(data=conf.to(device), dataset=dataset ,measurement=conf.cg_pos, record=True, save_root=out_path)
 
-            
+            torch.save({'conf'+str(k): conf}, os.path.join(out_path, 'input', 'conf'+str(k)+'_.pt'))
             torch.save(input_conf, os.path.join(out_path, 'input', fname))
             torch.save(input_cg_pos, os.path.join(out_path, 'label', fname))
             torch.save(sample.perb_pos, os.path.join(out_path, 'recon', fname))
+            
         else:
             pass
        

@@ -9,9 +9,9 @@ from torch import Tensor
 from utils.misc import pbc_radius_graph, get_timestep_embedding
 
 N_ATOM_TYPES = 2
-N_BOND_TYPES = 3
-N_DEGREE_TYPES = 4
-N_HYBRIDIZATION_TYPES = 3
+N_BOND_TYPES = 5
+N_DEGREE_TYPES = 5
+N_HYBRIDIZATION_TYPES = 4
 
 #The following class implements a Tensor Product Convolutional layer 
 class TensorProductConvLayer(nn.Module):
@@ -85,9 +85,9 @@ class TensorProductScoreModel(nn.Module):
         self.scale_by_sigma = scale_by_sigma
         
         #self.atom_type_embedding = nn.Embedding(N_ATOM_TYPES,2)
-        self.bond_type_embedding = nn.Embedding(N_BOND_TYPES,2)
-        self.degree_type_embedding = nn.Embedding(N_DEGREE_TYPES,2)
-        self.hybridization_type_embedding = nn.Embedding(N_HYBRIDIZATION_TYPES,2)
+        #self.bond_type_embedding = nn.Embedding(N_BOND_TYPES,3)
+        #self.degree_type_embedding = nn.Embedding(N_DEGREE_TYPES,4)
+        #self.hybridization_type_embedding = nn.Embedding(N_HYBRIDIZATION_TYPES,3)
         
         # The following MLP is used to embed the atom chemical features in higher dimensional space with parity invariant features of order l=0
         self.node_embedding = nn.Sequential(
@@ -158,38 +158,38 @@ class TensorProductScoreModel(nn.Module):
         
         node_attr = self.node_embedding(node_attr)
         edge_attr = self.edge_embedding(edge_attr)
-        count = 0 
+        
         for layer in self.conv_layers:
             edge_attr_ = torch.cat([edge_attr, node_attr[src, :self.ns], node_attr[dst, :self.ns]], -1)
             node_attr = layer(node_attr, edge_index, edge_attr_, edge_sh, reduce="mean")
             torch.cuda.empty_cache()
-            count += 1
-        
-        
+            
         return node_attr
             
         
     def build_conv_graph(self, data):
         
-        #src, dst = data.edge_index # source and destination nodes of the connected components graph
-        #edge_vec = data.conf[dst.long()] - data.conf[src.long()]
+        data.at_batch = get_full_batch(data.conf,data.batch)
         
-        radius_edges = pbc_radius_graph(data.perb_pos.clone().detach(), r=self.max_radius, d=data.boxsize, batch=data.batch)
+        radius_edges = pbc_radius_graph(data.perb_pos.clone().detach()[data.mask.bool()], r=self.max_radius, d=data.boxsize, batch=data.at_batch)
+        
         # Convert to sets of tuples: check for unique edges to add non-bonded features
         edges_cc     = set(map(tuple, data.edge_index.permute(1,0).cpu().numpy()))
         edges_radius = set(map(tuple, radius_edges.permute(1,0).cpu().numpy()))
         unique_edges = edges_radius - edges_cc
         non_bonded_edges_index = torch.tensor(list(unique_edges)).permute(1,0).to(data.x.device) # non-bonded set of indexes
         
-        non_bonded_attr       = torch.zeros(non_bonded_edges_index.shape[-1], data.edge_attr.shape[-1], device=data.x.device)
-        non_bonded_attr[:, 2] = 1 # non-bonded edges are assigned a bond type of 2 
+        edge_attr = torch.cat([data.edge_attr, torch.zeros(data.edge_attr.size(0),1).to(data.edge_attr)],dim=1)
+        non_bonded_attr       = torch.zeros(non_bonded_edges_index.shape[-1], edge_attr.shape[-1], device=data.x.device)
+        non_bonded_attr[:, 4] = 1 # non-bonded edges are assigned a bond type of 2 
         
-        edge_index = torch.cat([data.edge_index, non_bonded_edges_index], dim=1).long() #concatenates the edges from the original graph of connected components and the radius graph
-        edge_attr  = torch.cat([data.edge_attr, non_bonded_attr], dim=0)
+        edge_index = torch.cat([data.full_edge_index, non_bonded_edges_index], dim=1).long() #concatenates the edges from the original graph of connected components and the radius graph
+        edge_attr  = torch.cat([edge_attr, non_bonded_attr], dim=0)
         assert edge_attr.shape[0] == edge_index.shape[1], "Edge attributes and edge index must have the same number of edges"
         
         #embeddings
-        node_attr, edge_attr = self.features_embedding(node_features=data.x, edge_features=edge_attr, edge_index=edge_index)
+        #node_attr, edge_attr = self.features_embedding(node_features=data.x, edge_features=edge_attr, edge_index=edge_index)
+        node_attr = data.x
         node_sigma = data.node_sigma
         node_sigma_emb = get_timestep_embedding(node_sigma, self.sigma_embed_dim) #embeds the node sigma in a higher dimensional space
         
@@ -199,15 +199,16 @@ class TensorProductScoreModel(nn.Module):
         #node_attr = torch.cat([node_attr, node_sigma_emb], dim=1)
         
         d = data.boxsize
-       
+          
         src, dst = edge_index # source and destination nodes of the radius graph + the original graph
+        
         edge_vec = data.perb_pos[dst.long()] - data.perb_pos[src.long()] # relative distance between the source and destination nodes of the radius graph + the original graph
-      
         boxsize_dst = d[dst.long() // data.perb_pos.size(0)]
         edge_vec -= torch.round(edge_vec / boxsize_dst[...,None]) * boxsize_dst[...,None] # periodic boundary conditions
-        edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding using a gaussian smearing function
+        edge_length_emb = self.distance_expansion(edge_vec.norm(dim=-1)) # edge length embedding
         
-        edge_attr = torch.cat([edge_attr, edge_length_emb], dim=1).to(dtype=torch.float32) # concatenates the edge attributes with the edge length embedding
+        edge_attr = torch.cat([edge_attr, edge_length_emb], 
+                              dim=1).to(dtype=torch.float32) # concatenates the edge attributes with the edge length embedding
         
         edge_sh = o3.spherical_harmonics(self.sh_irreps, edge_vec.to(dtype=torch.float32), normalize=True, normalization='component')
         
@@ -215,18 +216,18 @@ class TensorProductScoreModel(nn.Module):
 
     def features_embedding(self, node_features: Tensor, edge_features: Tensor, edge_index: Tensor):
         
-        #atom_type_feat = node_features[:,:N_ATOM_TYPES].long()
+        atom_type_feat = node_features[:,:N_ATOM_TYPES].long()
         degree_type_feat = node_features[:,N_ATOM_TYPES:N_ATOM_TYPES + N_DEGREE_TYPES].long()
         hybr_type_feat = node_features[:,N_ATOM_TYPES + N_DEGREE_TYPES:N_ATOM_TYPES + N_DEGREE_TYPES + N_HYBRIDIZATION_TYPES].long()
         
         # node embeddings 
-        #atom_type_emb = self.atom_type_embedding(atom_type_feat.argmax(dim=1))
+        atom_type_emb = self.atom_type_embedding(atom_type_feat.argmax(dim=1))
         degree_type_emb = self.degree_type_embedding(degree_type_feat.argmax(dim=1))
         hybr_type_emb = self.hybridization_type_embedding(hybr_type_feat.argmax(dim=1))
         
         bond_type_emb = self.bond_type_embedding(edge_features.argmax(dim=1))
         
-        node_attr = torch.cat([degree_type_emb, hybr_type_emb], dim=1).to(node_features)
+        node_attr = torch.cat([atom_type_emb, degree_type_emb, hybr_type_emb], dim=1).to(node_features)
         
         lifted_node_attr = node_attr[edge_index].permute(1,2,0)
         lifted_node_attr = lifted_node_attr[:,:, 0] + lifted_node_attr[:,:, 1] 
@@ -234,6 +235,22 @@ class TensorProductScoreModel(nn.Module):
         edge_attr = torch.cat([lifted_node_attr, bond_type_emb], dim=1).to(node_features)
         
         return node_attr, edge_attr
+
+
+def get_full_batch(pos, old_batch):
+    
+    batch_size = old_batch.max().item() + 1
+    
+    full_nodes = old_batch.size(0) // batch_size
+    n_nodes = pos.size(0) // batch_size
+    
+    new_batch = torch.zeros(n_nodes, dtype=torch.long, device=pos.device)
+    
+    for n in range(batch_size-1):
+        new_batch = torch.cat([new_batch, (n+1) * torch.ones(n_nodes, device=pos.device)], dim=0)
+    
+    return new_batch
+        
     
     
 

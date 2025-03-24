@@ -13,6 +13,7 @@ def train_app(cfg: DictConfig) -> None:
     run = wandb.init(
         project="denoising-backmapping",
         config=cfg.train.__dict__['_content'],
+        name="UnconditionalAtomsCGNodesEdgesNormZeroMean"
         #resume="allow"
     )
     diffusion_config = cfg.train.diffusion

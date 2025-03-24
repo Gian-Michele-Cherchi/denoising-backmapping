@@ -69,20 +69,24 @@ class CoarseGrainOperator(LinearOperator):
         self.n_atom_in_mol = n_atoms // n_polymers
         
     def forward(self, cg_distances, noisy_measurement=None, **kwargs):
+        mask = kwargs.get('mask', None)
         if len(cg_distances.shape) == 3:
             batch_size = cg_distances.shape[0]
             cg_distances = cg_distances.view(batch_size, self.n_atoms, -1)
             noisy_measurement =  noisy_measurement.view(batch_size, int(self.n_polymers*self.n_monomers), -1)
         elif len(cg_distances.shape) == 2:
             cg_distances = cg_distances.unsqueeze(0)
+            mask = mask[None,...]
             noisy_measurement = noisy_measurement.unsqueeze(0)
             if len(self.com_matrix.shape) == 2:
                 self.com_matrix = self.com_matrix.unsqueeze(0)
+               
             batch_size = 1
         else:
             raise ValueError("cg_distances should have 2 or 3 dimensions.")
         
-        lifted_measurement = cg_distances.clone()
+        lifted_measurement = cg_distances[mask.bool()].unsqueeze(0).clone()
+        cg_distances[~mask.bool()] = 0.0
         for i in range(int(self.n_monomers*self.n_polymers)):
             mon_id = i % self.n_monomers
             pol_id = i // self.n_monomers
@@ -94,7 +98,8 @@ class CoarseGrainOperator(LinearOperator):
             lifted_measurement[:,index] = noisy_measurement[:,i:i+1].repeat(1,index.sum().item(),1) 
         lifted_measurement = lifted_measurement.view(batch_size, self.n_atoms, -1)
         
-        perb_pos = lifted_measurement +  self.cg_std_dist[...,None,None] * cg_distances
+        perb_pos = lifted_measurement +  cg_distances[mask.bool()].unsqueeze(0)
+        # self.cg_std_dist[...,None,None] *
         reconstructed_cg_pos = self.com_matrix.to(self.device).bmm(perb_pos)
         if batch_size == 1:
             return reconstructed_cg_pos.squeeze(0)
